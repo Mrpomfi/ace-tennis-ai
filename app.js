@@ -1,4 +1,4 @@
-/* ACE Tennis AI – lokale Datenbank. Keine Netzwerk- oder Analyse-API-Aufrufe. */
+/* ACE Tennis AI – lokale Datenbank und lokale Videoanalyse. */
 const DB_NAME='ace-tennis-ai-local', DB_VERSION=2;
 let db, selectedVideo=null, previewUrl=null;
 const $=id=>document.getElementById(id);
@@ -68,7 +68,7 @@ async function startForehandAnalysis(videoId){
       status.textContent='Vorhand wird untersucht: Bild '+(i+1)+' von '+times.length+' …';
       const seeked=waitEvent(videoEl,'seeked');videoEl.currentTime=times[i];await seeked;
       const scale=Math.min(1,640/(videoEl.videoWidth||640));canvas.width=Math.round((videoEl.videoWidth||640)*scale);canvas.height=Math.round((videoEl.videoHeight||360)*scale);ctx.drawImage(videoEl,0,0,canvas.width,canvas.height);
-      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm)continue;detected++;
+      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
       const visible=lm.filter(p=>(p.visibility??1)>.4).length;
       const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null};
       for(const [s,e,w,key,arr] of [[11,13,15,'leftElbow',elbowL],[12,14,16,'rightElbow',elbowR]]){
@@ -89,13 +89,39 @@ async function startForehandAnalysis(videoId){
   }catch(e){status.textContent='Analyse nicht möglich: '+(e.message||'Unbekannter Fehler')+'. Bitte ein gut beleuchtetes Video mit vollständig sichtbarem Körper verwenden.'}
   finally{if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
 }
+
+function angleChart(frames,keys,title){
+  const colors={left:'#8ba944',right:'#263b59'};
+  const width=640,height=220,left=42,right=14,top=14,bottom=34;
+  const plotW=width-left-right,plotH=height-top-bottom;
+  const series=keys.map(k=>({key:k.key,label:k.label,color:k.side==='left'?colors.left:colors.right}));
+  const paths=series.map(s=>{
+    let drawing='',active=false;
+    frames.forEach((f,i)=>{
+      const value=f[s.key];
+      if(!Number.isFinite(value)){active=false;return;}
+      const startTime=frames[0]?.time??f.time,endTime=frames[frames.length-1]?.time??f.time;const x=left+(endTime<=startTime?0:(f.time-startTime)/(endTime-startTime))*plotW;
+      const y=top+(180-Math.max(0,Math.min(180,value)))/180*plotH;
+      drawing+=(active?' L':' M')+x.toFixed(1)+' '+y.toFixed(1);
+      active=true;
+    });
+    return '<path d="'+drawing+'" fill="none" stroke="'+s.color+'" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>';
+  }).join('');
+  const grid=[0,45,90,135,180].map(v=>{
+    const y=top+(180-v)/180*plotH;
+    return '<line x1="'+left+'" y1="'+y+'" x2="'+(width-right)+'" y2="'+y+'" stroke="#e6ebef" stroke-width="1"/><text x="'+(left-8)+'" y="'+(y+3)+'" text-anchor="end" fill="#8c97a3" font-size="10">'+v+'°</text>';
+  }).join('');
+  const first=frames[0]?.time??0,last=frames[frames.length-1]?.time??0;
+  const legend=series.map(s=>'<span class="chart-legend-item"><i style="background:'+s.color+'"></i>'+s.label+'</span>').join('');
+  return '<section class="angle-chart"><b>'+title+'</b><div class="chart-legend">'+legend+'</div><svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="'+title+': Gelenkwinkel im Zeitverlauf von '+first.toFixed(1)+' bis '+last.toFixed(1)+' Sekunden">'+grid+paths+'<text x="'+left+'" y="'+(height-8)+'" fill="#8c97a3" font-size="10">0 s</text><text x="'+(width-right)+'" y="'+(height-8)+'" text-anchor="end" fill="#8c97a3" font-size="10">'+last.toFixed(1)+' s</text></svg></section>';
+}
 function renderAnalysisResult(r,v){
   const angleLabel=r.angle==='side'?'Seitlich':r.angle==='front'?'Von vorne':'Nicht angegeben';
   const side=(label,s)=>'<div class="metric-row"><span>'+label+'</span><b>'+formatStats(s)+'</b></div>';
   const phases=(r.phases||[]).map(p=>'<div class="phase"><b>'+p.name+'</b><small>Linker Ellenbogen: '+(p.leftElbow?.avg!=null?p.leftElbow.avg+'°':'—')+' · Rechter Ellenbogen: '+(p.rightElbow?.avg!=null?p.rightElbow.avg+'°':'—')+'</small><small>Linkes Knie: '+(p.leftKnee?.avg!=null?p.leftKnee.avg+'°':'—')+' · Rechtes Knie: '+(p.rightKnee?.avg!=null?p.rightKnee.avg+'°':'—')+'</small></div>').join('');
   const coverageText=r.coverage>=80?'Die Körperpose wurde in einem großen Teil der Stichproben erkannt.':r.coverage>=50?'Die Erkennung war wechselhaft. Einzelne Messwerte können fehlen.':'Die Erkennung war zu unsicher für eine verlässliche Bewegungsbeobachtung.';
   const tips=[];if(r.coverage<80)tips.push('Filme bei gutem Licht und halte Kopf, Füße und beide Arme während des gesamten Schlages im Bild.');if(r.angle==='unknown')tips.push('Wähle beim nächsten Video die Kameraperspektive aus.');tips.push('Nutze möglichst dieselbe Kameraposition und denselben Abstand, wenn du Fortschritte vergleichen möchtest.');
-  $('analysisResult').innerHTML='<article class="entry"><div class="entry-top"><b>Vorhand · '+dateText(v.date)+'</b><span class="pill">'+r.coverage+'% Pose-Erkennung</span></div><small>Perspektive: '+angleLabel+' · '+r.detected+'/'+r.sampled+' analysierte Bilder</small>'+(r.preview?'<img alt="Erkanntes Körperskelett" src="'+r.preview+'" style="width:100%;border-radius:10px;margin-top:10px;background:#111">':'')+'<h3>Bewegungsverlauf</h3><p class="tiny">Die Aufnahme ist in drei gleich lange Zeitabschnitte unterteilt. So lässt sich sehen, wie sich erkannte Gelenkwinkel im Video verändern. Das sind Messwerte, keine Bewertung der Schlagtechnik.</p>'+(phases||'<p class="tiny">Zu wenige Messwerte für den Zeitverlauf.</p>')+'<h3>Winkelübersicht</h3>'+side('Ellenbogen links',r.elbowLeft)+side('Ellenbogen rechts',r.elbowRight)+side('Knie links',r.kneeLeft)+side('Knie rechts',r.kneeRight)+'<h3>Einordnung</h3><p>'+coverageText+'</p><h3>Für die nächste Aufnahme</h3><ul>'+tips.map(t=>'<li>'+esc(t)+'</li>').join('')+'</ul><p class="tiny">Noch nicht erkannt werden Schläger, Ball, Treffpunkt, Schlagrichtung oder 3D-Rotation. Deshalb gibt es bewusst keine Techniknote und keine Aussage, ob die Bewegung technisch richtig ist.</p></article>';
+  $('analysisResult').innerHTML='<article class="entry"><div class="entry-top"><b>Vorhand · '+dateText(v.date)+'</b><span class="pill">'+r.coverage+'% Pose-Erkennung</span></div><small>Perspektive: '+angleLabel+' · '+r.detected+'/'+r.sampled+' analysierte Bilder</small>'+(r.preview?'<img alt="Erkanntes Körperskelett" src="'+r.preview+'" style="width:100%;border-radius:10px;margin-top:10px;background:#111">':'')+'<h3>Winkelverlauf über die gesamte Aufnahme</h3><p class="tiny">Die Kurven zeigen die erkannten Winkel Bild für Bild. Lücken bedeuten, dass ein Gelenk in diesem Einzelbild nicht sicher erkannt wurde.</p>'+(r.frames?.length?angleChart(r.frames,[{key:'leftElbow',label:'Links',side:'left'},{key:'rightElbow',label:'Rechts',side:'right'}],'Ellenbogen'): '<p class="tiny">Keine Winkelmesswerte vorhanden.</p>')+(r.frames?.length?angleChart(r.frames,[{key:'leftKnee',label:'Links',side:'left'},{key:'rightKnee',label:'Rechts',side:'right'}],'Knie'):'')+'<h3>Anfang, Mitte und Ende</h3>'+(phases||'<p class="tiny">Zu wenige Messwerte für den Zeitverlauf.</p>')+'<h3>Winkelübersicht</h3>'+side('Ellenbogen links',r.elbowLeft)+side('Ellenbogen rechts',r.elbowRight)+side('Knie links',r.kneeLeft)+side('Knie rechts',r.kneeRight)+'<h3>Einordnung</h3><p>'+coverageText+'</p><h3>Für die nächste Aufnahme</h3><ul>'+tips.map(t=>'<li>'+esc(t)+'</li>').join('')+'</ul><p class="tiny">Noch nicht erkannt werden Schläger, Ball, Treffpunkt, Schlagrichtung oder 3D-Rotation. Deshalb gibt es bewusst keine Techniknote und keine Aussage, ob die Bewegung technisch richtig ist.</p></article>';
 }
 
 $('saveMatch').addEventListener('click',async()=>{await add('matches',{date:$('matchDate').value||today(),opponent:$('opponent').value.trim(),result:$('matchResult').value,score:$('matchScore').value.trim(),surface:$('matchSurface').value,good:$('matchGood').value,improve:$('matchImprove').value,mood:Number($('matchMood').value),created:Date.now()});['opponent','matchScore','matchGood','matchImprove'].forEach(id=>$(id).value='');setStatus('matchStatus','Match wurde lokal gespeichert.');renderMatches();renderHome()});
