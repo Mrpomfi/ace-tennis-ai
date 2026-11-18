@@ -68,7 +68,7 @@ async function startForehandAnalysis(videoId){
       status.textContent='Vorhand wird untersucht: Bild '+(i+1)+' von '+times.length+' …';
       const seeked=waitEvent(videoEl,'seeked');videoEl.currentTime=times[i];await seeked;
       const scale=Math.min(1,640/(videoEl.videoWidth||640));canvas.width=Math.round((videoEl.videoWidth||640)*scale);canvas.height=Math.round((videoEl.videoHeight||360)*scale);ctx.drawImage(videoEl,0,0,canvas.width,canvas.height);
-      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm)continue;detected++;
+      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
       const visible=lm.filter(p=>(p.visibility??1)>.4).length;
       const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null};
       for(const [s,e,w,key,arr] of [[11,13,15,'leftElbow',elbowL],[12,14,16,'rightElbow',elbowR]]){
@@ -100,7 +100,7 @@ function angleChart(frames,keys,title){
     frames.forEach((f,i)=>{
       const value=f[s.key];
       if(!Number.isFinite(value)){active=false;return;}
-      const x=left+(frames.length<=1?0:i/(frames.length-1))*plotW;
+      const startTime=frames[0]?.time??f.time,endTime=frames[frames.length-1]?.time??f.time;const x=left+(endTime<=startTime?0:(f.time-startTime)/(endTime-startTime))*plotW;
       const y=top+(180-Math.max(0,Math.min(180,value)))/180*plotH;
       drawing+=(active?' L':' M')+x.toFixed(1)+' '+y.toFixed(1);
       active=true;
