@@ -24,12 +24,12 @@ card.querySelector('[data-delete]').onclick=async()=>{if(confirm('Dieses Video u
 
 // ACE Movement Lab – lokale Einzelbildanalyse mit MediaPipe Pose Landmarker.
 let poseTaskPromise=null, analysisBusy=false;
-const MP_MODEL='https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+const MP_MODEL='./vendor/mediapipe/pose_landmarker_lite.task';
 async function getPoseTask(){
   if(!poseTaskPromise)poseTaskPromise=(async()=>{
     setStatus('analysisStatus','Bewegungsmodell wird geladen. Beim ersten Mal ist eine Internetverbindung nötig …');
-    const {FilesetResolver,PoseLandmarker}=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs');
-    const vision=await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm');
+    const {FilesetResolver,PoseLandmarker}=await import('./vendor/mediapipe/vision_bundle.mjs');
+    const vision=await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');
     return await PoseLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:MP_MODEL,delegate:'GPU'},runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:.45,minPosePresenceConfidence:.45,minTrackingConfidence:.45});
   })().catch(e=>{poseTaskPromise=null;throw e});
   return poseTaskPromise;
