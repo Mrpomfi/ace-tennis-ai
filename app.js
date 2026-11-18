@@ -42,9 +42,16 @@ function drawPose(canvas,landmarks){
   for(const p of landmarks){if((p.visibility??1)<.35)continue;c.beginPath();c.arc(p.x*canvas.width,p.y*canvas.height,Math.max(2,canvas.width/150),0,Math.PI*2);c.fill()}
 }
 function waitEvent(el,name){return new Promise((resolve,reject)=>{const done=()=>{cleanup();resolve()},bad=()=>{cleanup();reject(Error('Video konnte nicht gelesen werden'))},cleanup=()=>{el.removeEventListener(name,done);el.removeEventListener('error',bad)};el.addEventListener(name,done,{once:true});el.addEventListener('error',bad,{once:true})})}
+
+function seriesStats(values){
+  if(!values.length)return null;
+  const sorted=[...values].sort((a,b)=>a-b);
+  return {avg:Math.round(values.reduce((a,b)=>a+b,0)/values.length),min:sorted[0],max:sorted[sorted.length-1],count:values.length};
+}
+function formatStats(s){return s?s.avg+'° im Mittel · '+s.min+'–'+s.max+'° · '+s.count+' Messungen':'Nicht ausreichend erkannt'}
 async function startForehandAnalysis(videoId){
   if(analysisBusy)return;analysisBusy=true;const status=$('analysisStatus'),out=$('analysisResult');out.innerHTML='';
-  let videoEl,objectUrl,task;
+  let videoEl,objectUrl;
   try{
     const item=await get('videos',videoId);if(!item)throw Error('Video nicht gefunden');
     if(item.shot!=='Vorhand')throw Error('Bitte ein Vorhandvideo auswählen.');
@@ -52,35 +59,43 @@ async function startForehandAnalysis(videoId){
     objectUrl=URL.createObjectURL(item.blob);videoEl=document.createElement('video');videoEl.src=objectUrl;videoEl.muted=true;videoEl.playsInline=true;videoEl.preload='auto';
     await new Promise((resolve,reject)=>{videoEl.onloadedmetadata=resolve;videoEl.onerror=()=>reject(Error('Videoformat kann nicht gelesen werden.'));});
     if(!Number.isFinite(videoEl.duration)||videoEl.duration<=0)throw Error('Videolänge konnte nicht ermittelt werden.');
-    task=await getPoseTask();
-    const duration=videoEl.duration, count=Math.min(32,Math.max(8,Math.ceil(duration*2.5))), times=Array.from({length:count},(_,i)=>Math.min(Math.max(0.05,duration-0.05),0.05+(Math.max(0,duration-0.1)*i/Math.max(1,count-1))));
+    const task=await getPoseTask();
+    const duration=videoEl.duration,count=Math.min(48,Math.max(12,Math.ceil(duration*4)));
+    const times=Array.from({length:count},(_,i)=>Math.min(Math.max(0.05,duration-0.05),0.05+(Math.max(0,duration-0.1)*i/Math.max(1,count-1))));
     const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
-    const frames=[],elbows=[],knees=[];let detected=0,preview=null;
+    const frames=[],elbowL=[],elbowR=[],kneeL=[],kneeR=[],phaseFrames=[[],[],[]];let detected=0,preview=null;
     for(let i=0;i<times.length;i++){
-      status.textContent=`Vorhand wird untersucht: Bild ${i+1} von ${times.length} …`;
-      videoEl.currentTime=times[i];await waitEvent(videoEl,'seeked');
+      status.textContent='Vorhand wird untersucht: Bild '+(i+1)+' von '+times.length+' …';
+      const seeked=waitEvent(videoEl,'seeked');videoEl.currentTime=times[i];await seeked;
       const scale=Math.min(1,640/(videoEl.videoWidth||640));canvas.width=Math.round((videoEl.videoWidth||640)*scale);canvas.height=Math.round((videoEl.videoHeight||360)*scale);ctx.drawImage(videoEl,0,0,canvas.width,canvas.height);
-      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i);
-      const lm=res.landmarks?.[0];if(!lm)continue;detected++;
-      const vis=lm.filter(p=>(p.visibility??1)>.4).length;frames.push({time:times[i],visible:vis});
-      for(const [s,e,w] of [[11,13,15],[12,14,16]]){if([lm[s],lm[e],lm[w]].every(p=>(p.visibility??1)>.4)){const a=angle3(lm[s],lm[e],lm[w]);if(a!==null)elbows.push(a)}}
-      for(const [h,k,a] of [[23,25,27],[24,26,28]]){if([lm[h],lm[k],lm[a]].every(p=>(p.visibility??1)>.4)){const v=angle3(lm[h],lm[k],lm[a]);if(v!==null)knees.push(v)}}
-      if(!preview&&vis>=20){drawPose(canvas,lm);preview=canvas.toDataURL('image/jpeg',.78)}
+      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm)continue;detected++;
+      const visible=lm.filter(p=>(p.visibility??1)>.4).length;
+      const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null};
+      for(const [s,e,w,key,arr] of [[11,13,15,'leftElbow',elbowL],[12,14,16,'rightElbow',elbowR]]){
+        if([lm[s],lm[e],lm[w]].every(p=>(p.visibility??1)>.4)){const a=angle3(lm[s],lm[e],lm[w]);if(a!==null){frame[key]=a;arr.push(a)}}
+      }
+      for(const [h,k,a,key,arr] of [[23,25,27,'leftKnee',kneeL],[24,26,28,'rightKnee',kneeR]]){
+        if([lm[h],lm[k],lm[a]].every(p=>(p.visibility??1)>.4)){const v=angle3(lm[h],lm[k],lm[a]);if(v!==null){frame[key]=v;arr.push(v)}}
+      }
+      frames.push(frame);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(frame);
+      if(!preview&&visible>=20){drawPose(canvas,lm);preview=canvas.toDataURL('image/jpeg',.78)}
     }
     const coverage=Math.round(detected/Math.max(1,times.length)*100);
-    const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;
-    const result={videoId,created:Date.now(),angle:item.angle||'unknown',sampled:times.length,detected,coverage,elbowAverage:avg(elbows),kneeAverage:avg(knees),preview,frames};
+    const phases=phaseFrames.map((group,i)=>({name:['Anfang','Mitte','Ende'][i],leftElbow:seriesStats(group.map(x=>x.leftElbow).filter(Number.isFinite)),rightElbow:seriesStats(group.map(x=>x.rightElbow).filter(Number.isFinite)),leftKnee:seriesStats(group.map(x=>x.leftKnee).filter(Number.isFinite)),rightKnee:seriesStats(group.map(x=>x.rightKnee).filter(Number.isFinite))}));
+    const result={videoId,created:Date.now(),angle:item.angle||'unknown',sampled:times.length,detected,coverage,elbowAverage:seriesStats([...elbowL,...elbowR])?.avg??null,kneeAverage:seriesStats([...kneeL,...kneeR])?.avg??null,elbowLeft:seriesStats(elbowL),elbowRight:seriesStats(elbowR),kneeLeft:seriesStats(kneeL),kneeRight:seriesStats(kneeR),phases,preview,frames};
     await add('analyses',result);
-    status.textContent=`Analyse abgeschlossen · ${detected} von ${times.length} Bildern mit erkennbarer Körperpose. Ergebnis lokal gespeichert.`;
+    status.textContent='Analyse abgeschlossen · '+detected+' von '+times.length+' Bildern mit erkennbarer Körperpose. Ergebnis lokal gespeichert.';
     renderAnalysisResult(result,item);
   }catch(e){status.textContent='Analyse nicht möglich: '+(e.message||'Unbekannter Fehler')+'. Bitte ein gut beleuchtetes Video mit vollständig sichtbarem Körper verwenden.'}
-  finally{if(task&&videoEl){/* keep shared model loaded */}if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
+  finally{if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
 }
 function renderAnalysisResult(r,v){
   const angleLabel=r.angle==='side'?'Seitlich':r.angle==='front'?'Von vorne':'Nicht angegeben';
-  const elbow=r.elbowAverage===null?'Nicht ausreichend erkannt':`${r.elbowAverage}° mittlerer Ellenbogenwinkel in den erkannten Bildern`;
-  const knee=r.kneeAverage===null?'Nicht ausreichend erkannt':`${r.kneeAverage}° mittlerer Kniewinkel in den erkannten Bildern`;
-  $('analysisResult').innerHTML=`<article class="entry"><div class="entry-top"><b>Vorhand · ${dateText(v.date)}</b><span class="pill">${r.coverage}% Pose-Erkennung</span></div><small>Perspektive: ${angleLabel} · ${r.detected}/${r.sampled} analysierte Bilder</small>${r.preview?`<img alt="Erkanntes Körperskelett" src="${r.preview}" style="width:100%;border-radius:10px;margin-top:10px;background:#111">`:''}<p><b>Messwerte aus der Körpererkennung</b><br>Ellenbogen: ${elbow}<br>Knie: ${knee}</p><p><b>Einordnung</b><br>${r.coverage>=75?'Die Körperpose war in vielen Stichproben sichtbar. Die Winkelwerte können als grobe Bewegungsreferenz dienen.':r.coverage>=40?'Die Pose wurde nur teilweise erkannt. Bitte bei besserem Licht und mit vollständigem Körper im Bild erneut filmen.':'Die Erkennung war zu unsicher für eine technische Bewertung.'}</p><p class="tiny">Diese erste Version erkennt Körperpunkte, aber noch nicht zuverlässig Schläger, Ball, Treffpunkt, Schlagrichtung oder Rotation in 3D. Aus den Winkeln wird daher noch keine Techniknote berechnet.</p></article>`;
+  const side=(label,s)=>'<div class="metric-row"><span>'+label+'</span><b>'+formatStats(s)+'</b></div>';
+  const phases=(r.phases||[]).map(p=>'<div class="phase"><b>'+p.name+'</b><small>Linker Ellenbogen: '+(p.leftElbow?.avg!=null?p.leftElbow.avg+'°':'—')+' · Rechter Ellenbogen: '+(p.rightElbow?.avg!=null?p.rightElbow.avg+'°':'—')+'</small><small>Linkes Knie: '+(p.leftKnee?.avg!=null?p.leftKnee.avg+'°':'—')+' · Rechtes Knie: '+(p.rightKnee?.avg!=null?p.rightKnee.avg+'°':'—')+'</small></div>').join('');
+  const coverageText=r.coverage>=80?'Die Körperpose wurde in einem großen Teil der Stichproben erkannt.':r.coverage>=50?'Die Erkennung war wechselhaft. Einzelne Messwerte können fehlen.':'Die Erkennung war zu unsicher für eine verlässliche Bewegungsbeobachtung.';
+  const tips=[];if(r.coverage<80)tips.push('Filme bei gutem Licht und halte Kopf, Füße und beide Arme während des gesamten Schlages im Bild.');if(r.angle==='unknown')tips.push('Wähle beim nächsten Video die Kameraperspektive aus.');tips.push('Nutze möglichst dieselbe Kameraposition und denselben Abstand, wenn du Fortschritte vergleichen möchtest.');
+  $('analysisResult').innerHTML='<article class="entry"><div class="entry-top"><b>Vorhand · '+dateText(v.date)+'</b><span class="pill">'+r.coverage+'% Pose-Erkennung</span></div><small>Perspektive: '+angleLabel+' · '+r.detected+'/'+r.sampled+' analysierte Bilder</small>'+(r.preview?'<img alt="Erkanntes Körperskelett" src="'+r.preview+'" style="width:100%;border-radius:10px;margin-top:10px;background:#111">':'')+'<h3>Bewegungsverlauf</h3><p class="tiny">Die Aufnahme ist in drei gleich lange Zeitabschnitte unterteilt. So lässt sich sehen, wie sich erkannte Gelenkwinkel im Video verändern. Das sind Messwerte, keine Bewertung der Schlagtechnik.</p>'+(phases||'<p class="tiny">Zu wenige Messwerte für den Zeitverlauf.</p>')+'<h3>Winkelübersicht</h3>'+side('Ellenbogen links',r.elbowLeft)+side('Ellenbogen rechts',r.elbowRight)+side('Knie links',r.kneeLeft)+side('Knie rechts',r.kneeRight)+'<h3>Einordnung</h3><p>'+coverageText+'</p><h3>Für die nächste Aufnahme</h3><ul>'+tips.map(t=>'<li>'+esc(t)+'</li>').join('')+'</ul><p class="tiny">Noch nicht erkannt werden Schläger, Ball, Treffpunkt, Schlagrichtung oder 3D-Rotation. Deshalb gibt es bewusst keine Techniknote und keine Aussage, ob die Bewegung technisch richtig ist.</p></article>';
 }
 
 $('saveMatch').addEventListener('click',async()=>{await add('matches',{date:$('matchDate').value||today(),opponent:$('opponent').value.trim(),result:$('matchResult').value,score:$('matchScore').value.trim(),surface:$('matchSurface').value,good:$('matchGood').value,improve:$('matchImprove').value,mood:Number($('matchMood').value),created:Date.now()});['opponent','matchScore','matchGood','matchImprove'].forEach(id=>$(id).value='');setStatus('matchStatus','Match wurde lokal gespeichert.');renderMatches();renderHome()});
