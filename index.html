@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101b2a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="ACE Tennis AI – dein lokaler Tennis-Coach">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+<title>ACE Tennis AI</title>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brandmark">A</span><div><b>ACE TENNIS AI</b><small>DEIN LOKALER TENNISCOACH</small></div></div>
+  <span class="local"><i></i> NUR LOKAL</span>
+</header>
+<main>
+  <section class="hero">
+    <p class="eyebrow">DEIN TRAINING. DEINE ENTWICKLUNG.</p>
+    <h1>Spiel besser.<br><em>Schlag für Schlag.</em></h1>
+    <p>Dein persönlicher Tennis-Coach – Videos, Trainingsdaten und Fortschritte bleiben auf diesem iPhone.</p>
+    <div class="privacy"><span>🔒</span> Keine Cloud · Kein Konto · Kein Server</div>
+  </section>
+
+  <nav class="tabs" aria-label="Hauptnavigation">
+    <button class="tab active" data-view="home">Übersicht</button>
+    <button class="tab" data-view="videos">Videos</button>
+    <button class="tab" data-view="matches">Matches</button>
+    <button class="tab" data-view="training">Training</button>
+    <button class="tab" data-view="profile">Profil</button>
+  </nav>
+
+  <section class="view active" id="view-home">
+    <div class="section-head"><div><p class="eyebrow">DEIN SPIEL</p><h2>Leistungsübersicht</h2></div><span class="pill">Lokal gespeichert</span></div>
+    <div class="score-grid">
+      <article class="score"><span>VORHAND</span><strong id="score-forehand">–</strong><small>Letzte Bewertung</small></article>
+      <article class="score"><span>RÜCKHAND</span><strong id="score-backhand">–</strong><small>Letzte Bewertung</small></article>
+      <article class="score"><span>AUFSCHLAG</span><strong id="score-serve">–</strong><small>Letzte Bewertung</small></article>
+    </div>
+    <div class="card">
+      <div class="section-head"><div><p class="eyebrow">SCHNELLZUGRIFF</p><h2>Was möchtest du tun?</h2></div></div>
+      <div class="quick-grid">
+        <button class="quick" data-go="videos"><span>＋</span><b>Video sichern</b><small>Schläge aufnehmen oder importieren</small></button>
+        <button class="quick" data-go="matches"><span>▤</span><b>Match eintragen</b><small>Ergebnis und Erkenntnisse festhalten</small></button>
+        <button class="quick" data-go="training"><span>◎</span><b>Training planen</b><small>Einheiten und Ziele dokumentieren</small></button>
+        <button class="quick" data-go="profile"><span>♙</span><b>Profil bearbeiten</b><small>Spielerprofil und Niveau</small></button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-head"><div><p class="eyebrow">LETZTE AKTIVITÄTEN</p><h2>Dein Verlauf</h2></div></div>
+      <div id="recent" class="empty">Noch keine Einträge. Speichere dein erstes Video oder Match.</div>
+    </div>
+  </section>
+
+  <section class="view" id="view-videos">
+    <div class="section-head"><div><p class="eyebrow">VIDEOARCHIV</p><h2>Deine Schlagvideos</h2></div></div>
+    <div class="card">
+      <label class="field-label" for="videoShot">Schlagart</label>
+      <select id="videoShot"><option>Vorhand</option><option>Rückhand</option><option>Aufschlag</option><option>Volley</option><option>Smash</option><option>Beinarbeit</option><option>Sonstiges</option></select>
+      <label class="field-label" for="videoDate">Aufnahmedatum</label><input id="videoDate" type="date">
+      <label class="field-label" for="videoAngle">Kameraperspektive</label>
+      <select id="videoAngle"><option value="side">Seitlich</option><option value="front">Von vorne</option><option value="unknown">Nicht sicher</option></select>
+      <label class="field-label" for="videoFile">Video auswählen oder aufnehmen</label>
+      <input id="videoFile" class="file" type="file" accept="video/*" capture="environment">
+      <p class="hint">Tipp: Filme möglichst mit dem ganzen Körper im Bild und guter Beleuchtung. Das Video wird in der lokalen App-Datenbank gespeichert und nicht hochgeladen.</p>
+      <video id="videoPreview" controls playsinline hidden></video>
+      <label class="field-label" for="videoNote">Notiz (optional)</label><textarea id="videoNote" rows="2" placeholder="z. B. Vorhand im offenen Stand"></textarea>
+      <button id="saveVideo" class="primary" disabled>Video lokal speichern</button>
+      <p id="videoStatus" class="status" aria-live="polite"></p>
+    </div>
+    <div class="section-head subhead"><div><p class="eyebrow">DEINE AUFNAHMEN</p><h2>Gespeicherte Videos</h2></div><span id="videoCount" class="pill">0 Videos</span></div>
+    <div id="videoList" class="stack empty">Noch keine Videos gespeichert.</div>
+    <div class="card" id="analysisCard">
+      <div class="section-head"><div><p class="eyebrow">ACE MOVEMENT LAB</p><h2>Vorhandanalyse</h2></div><span class="pill">Auf dem Gerät</span></div>
+      <p class="bodycopy">Wähle bei einem gespeicherten Vorhandvideo „Analysieren“. Die App untersucht ausgewählte Einzelbilder und erkennt Körperpositionen. Die Auswertung ist eine technische Orientierung, kein Ersatz für eine Trainerbeurteilung.</p>
+      <p class="tiny">Für die erste Analyseversion wird das Pose-Modell beim ersten Start aus dem Internet geladen. Das Video selbst wird nicht hochgeladen und bleibt in deinem lokalen App-Speicher. MediaPipe kann technische Nutzungs-/Diagnosedaten senden; deshalb ist diese Version noch nicht vollständig netzwerkfrei.</p>
+      <div id="analysisStatus" class="status" aria-live="polite">Noch keine Analyse gestartet.</div>
+      <div id="analysisResult"></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-matches">
+    <div class="section-head"><div><p class="eyebrow">MATCHJOURNAL</p><h2>Spiel dokumentieren</h2></div></div>
+    <div class="card">
+      <label class="field-label" for="matchDate">Datum</label><input id="matchDate" type="date">
+      <label class="field-label" for="opponent">Gegner</label><input id="opponent" type="text" maxlength="60" placeholder="Name des Gegners">
+      <div class="two">
+        <div><label class="field-label" for="matchResult">Ergebnis</label><select id="matchResult"><option value="Sieg">Sieg</option><option value="Niederlage">Niederlage</option></select></div>
+        <div><label class="field-label" for="matchScore">Spielstand</label><input id="matchScore" type="text" maxlength="40" placeholder="6:4, 3:6, 10:7"></div>
+      </div>
+      <label class="field-label" for="matchSurface">Belag</label><select id="matchSurface"><option>Halle</option><option>Sand</option><option>Hartplatz</option><option>Rasen</option><option>Teppich</option></select>
+      <label class="field-label" for="matchGood">Was lief gut?</label><textarea id="matchGood" rows="2" placeholder="z. B. Mutig mit der Vorhand gespielt"></textarea>
+      <label class="field-label" for="matchImprove">Was möchte ich verbessern?</label><textarea id="matchImprove" rows="2" placeholder="z. B. Nach Führung konsequent bleiben"></textarea>
+      <label class="field-label" for="matchMood">Mentale Stärke (1–5)</label><input id="matchMood" type="range" min="1" max="5" value="3"><div class="range-label"><span>1 – schwierig</span><b id="moodValue">3 / 5</b><span>5 – sehr gut</span></div>
+      <button id="saveMatch" class="primary">Match lokal speichern</button>
+      <p id="matchStatus" class="status"></p>
+    </div>
+    <div class="section-head subhead"><div><p class="eyebrow">DEINE ERGEBNISSE</p><h2>Matchverlauf</h2></div></div>
+    <div id="matchList" class="stack empty">Noch keine Matches eingetragen.</div>
+  </section>
+
+  <section class="view" id="view-training">
+    <div class="section-head"><div><p class="eyebrow">TRAININGSPLAN</p><h2>Deine Einheiten</h2></div></div>
+    <div class="card">
+      <label class="field-label" for="trainDate">Datum</label><input id="trainDate" type="date">
+      <label class="field-label" for="trainFocus">Schwerpunkt</label><select id="trainFocus"><option>Vorhand</option><option>Rückhand</option><option>Aufschlag</option><option>Beinarbeit</option><option>Volley & Netzspiel</option><option>Matchtraining</option><option>Mentaltraining</option><option>Athletik</option></select>
+      <div class="two">
+        <div><label class="field-label" for="trainMinutes">Dauer (Min.)</label><input id="trainMinutes" type="number" min="5" max="300" value="60"></div>
+        <div><label class="field-label" for="trainFeeling">Gefühl (1–5)</label><input id="trainFeeling" type="range" min="1" max="5" value="3"></div>
+      </div>
+      <label class="field-label" for="trainNotes">Inhalte und Erkenntnisse</label><textarea id="trainNotes" rows="3" placeholder="Welche Übungen hast du gemacht? Was hat gut funktioniert?"></textarea>
+      <button id="saveTraining" class="primary">Training speichern</button>
+      <p id="trainStatus" class="status"></p>
+    </div>
+    <div class="section-head subhead"><div><p class="eyebrow">TRAININGSHISTORIE</p><h2>Vergangene Einheiten</h2></div></div>
+    <div id="trainingList" class="stack empty">Noch keine Trainingseinheiten gespeichert.</div>
+  </section>
+
+  <section class="view" id="view-profile">
+    <div class="section-head"><div><p class="eyebrow">SPIELERPROFIL</p><h2>Deine Angaben</h2></div></div>
+    <div class="card">
+      <label class="field-label" for="playerName">Spielername</label><input id="playerName" type="text" maxlength="60" placeholder="Name">
+      <label class="field-label" for="playerAge">Alter (optional)</label><input id="playerAge" type="number" min="5" max="99" placeholder="z. B. 12">
+      <label class="field-label" for="playerLevel">Spielniveau</label><select id="playerLevel"><option>Turnierspieler</option><option>Fortgeschritten</option><option>Hobbyspieler</option><option>Anfänger</option></select>
+      <label class="field-label" for="playerGoal">Mein wichtigstes Ziel</label><textarea id="playerGoal" rows="2" placeholder="z. B. stabilere Rückhand und mehr Sicherheit unter Druck"></textarea>
+      <button id="saveProfile" class="primary">Profil lokal speichern</button><p id="profileStatus" class="status"></p>
+    </div>
+    <div class="card">
+      <div class="section-head"><div><p class="eyebrow">DATENSCHUTZ & SICHERUNG</p><h2>Deine Daten bleiben hier</h2></div><span class="lock">🔒</span></div>
+      <p class="bodycopy">ACE Tennis AI überträgt keine Daten. Du kannst eine Sicherungsdatei exportieren und später wieder importieren. Bewahre diese Datei selbst sicher auf.</p>
+      <button id="exportData" class="secondary">Alle Daten exportieren</button>
+      <label class="field-label" for="importFile">Sicherung wiederherstellen</label><input id="importFile" class="file" type="file" accept="application/json,.json">
+      <button id="importData" class="secondary">Sicherung importieren</button>
+      <p id="backupStatus" class="status"></p>
+      <div class="storage"><span>Lokaler Speicherstatus</span><b id="storageStatus">Wird geprüft …</b></div>
+      <p class="tiny">Wichtig: iOS kann Website-Daten bei knappem Gerätespeicher unter Umständen entfernen. Exportiere deshalb regelmäßig eine Sicherung in die Dateien-App. Die Sicherungsdatei liegt dann außerhalb der App – die App selbst sendet nichts in eine Cloud.</p>
+      <button id="deleteAll" class="danger">Alle App-Daten löschen</button>
+    </div>
+  </section>
+  <footer>ACE TENNIS AI · LOKALE VERSION · 1.1</footer>
+</main>
+<script src="app.js"></script>
+</body></html>
