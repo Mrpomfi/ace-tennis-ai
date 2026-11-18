@@ -17,3 +17,9 @@
 .chart-legend{display:flex;gap:16px;margin:0 0 4px}
 .chart-legend-item{display:flex;align-items:center;gap:5px;font-size:9px;color:#778391}
 .chart-legend-item i{display:inline-block;width:9px;height:9px;border-radius:50%}
+
+/* ACE Movement Lab – experimentelle Schlagphasen */
+.stroke-phase-list{display:grid;gap:7px;margin:10px 0}
+.stroke-phase{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:#fbfcfd}
+.stroke-phase b{font-size:10px;color:var(--navy)}
+.stroke-phase small{font-size:10px;color:#71804e;font-weight:700;white-space:nowrap}
