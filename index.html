@@ -61,6 +61,8 @@
       <label class="field-label" for="videoShot">Schlagart</label>
       <select id="videoShot"><option>Vorhand</option><option>Rückhand</option><option>Aufschlag</option><option>Volley</option><option>Smash</option><option>Beinarbeit</option><option>Sonstiges</option></select>
       <label class="field-label" for="videoDate">Aufnahmedatum</label><input id="videoDate" type="date">
+      <label class="field-label" for="videoAngle">Kameraperspektive</label>
+      <select id="videoAngle"><option value="side">Seitlich</option><option value="front">Von vorne</option><option value="unknown">Nicht sicher</option></select>
       <label class="field-label" for="videoFile">Video auswählen oder aufnehmen</label>
       <input id="videoFile" class="file" type="file" accept="video/*" capture="environment">
       <p class="hint">Tipp: Filme möglichst mit dem ganzen Körper im Bild und guter Beleuchtung. Das Video wird in der lokalen App-Datenbank gespeichert und nicht hochgeladen.</p>
@@ -71,6 +73,13 @@
     </div>
     <div class="section-head subhead"><div><p class="eyebrow">DEINE AUFNAHMEN</p><h2>Gespeicherte Videos</h2></div><span id="videoCount" class="pill">0 Videos</span></div>
     <div id="videoList" class="stack empty">Noch keine Videos gespeichert.</div>
+    <div class="card" id="analysisCard">
+      <div class="section-head"><div><p class="eyebrow">ACE MOVEMENT LAB</p><h2>Vorhandanalyse</h2></div><span class="pill">Auf dem Gerät</span></div>
+      <p class="bodycopy">Wähle bei einem gespeicherten Vorhandvideo „Analysieren“. Die App untersucht ausgewählte Einzelbilder und erkennt Körperpositionen. Die Auswertung ist eine technische Orientierung, kein Ersatz für eine Trainerbeurteilung.</p>
+      <p class="tiny">Für die erste Analyseversion wird das Pose-Modell beim ersten Start aus dem Internet geladen. Das Video selbst wird nicht hochgeladen und bleibt in deinem lokalen App-Speicher. MediaPipe kann technische Nutzungs-/Diagnosedaten senden; deshalb ist diese Version noch nicht vollständig netzwerkfrei.</p>
+      <div id="analysisStatus" class="status" aria-live="polite">Noch keine Analyse gestartet.</div>
+      <div id="analysisResult"></div>
+    </div>
   </section>
 
   <section class="view" id="view-matches">
@@ -131,7 +140,7 @@
       <button id="deleteAll" class="danger">Alle App-Daten löschen</button>
     </div>
   </section>
-  <footer>ACE TENNIS AI · LOKALE VERSION · 1.0</footer>
+  <footer>ACE TENNIS AI · LOKALE VERSION · 1.1</footer>
 </main>
 <script src="app.js"></script>
 </body></html>

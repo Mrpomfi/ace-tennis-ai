@@ -26,3 +26,15 @@ Der JSON-Export enthält die Videos als Base64 und kann bei vielen/großen Video
 
 ## Noch nicht enthalten
 Es gibt noch keine automatische KI-Schlaganalyse und keine automatische Bewertung. Das Dashboard zeigt deshalb bewusst keine erfundenen Technik-Scores. Eine echte Analyse komplett offline wäre ein separates Entwicklungsprojekt: Ein geeignetes On-Device-Modell müsste auf iOS laufen, und die Erkennung von Schläger und Ball ist deutlich anspruchsvoller als reine Körperpose-Erkennung. Es wird in dieser Version kein Video übertragen.
+
+
+## Version 1.1 – Vorhandanalyse (erste Ausbaustufe)
+
+- Gespeicherte Vorhandvideos können lokal auf dem Gerät mit MediaPipe Pose Landmarker ausgewertet werden.
+- Die App tastet maximal 32 Videobilder ab und speichert erkannte Körperpunkte-Winkel/Erkennungsquote lokal in IndexedDB.
+- Die Perspektive (seitlich/von vorne) wird beim Speichern des Videos dokumentiert.
+- Die Auswertung zeigt Körpererkennung und grobe Ellenbogen-/Kniewinkel. Sie vergibt bewusst noch keine Techniknote und behauptet keine Ball-, Schläger- oder Treffpunkterkennung.
+
+**Wichtiger Hinweis zur Netzwerknutzung:** In dieser ersten Integrationsversion werden die MediaPipe-JavaScript-Bibliothek, WebAssembly-Dateien und das Pose-Modell beim ersten Analyseversuch aus jsDelivr bzw. Google-Storage geladen. Das Video wird dabei nicht hochgeladen; die Bildverarbeitung erfolgt im Browser auf dem iPhone. Laut MediaPipe-Dokumentation können Nutzungs-/Diagnosemetriken an Google übermittelt werden. Daher ist diese Version noch nicht vollständig netzwerkfrei. Für eine streng netzwerkfreie Ausbaustufe müssen Bibliothek, WASM und Modell lokal mitgeliefert und die Telemetrie-Abhängigkeit entfernt bzw. durch eine Lösung ohne Telemetrie ersetzt werden.
+
+Für die beste Erkennung: ganzer Körper im Bild, gute Beleuchtung, Kamera stabil, seitliche und frontale Perspektive jeweils als separates Video aufnehmen.
