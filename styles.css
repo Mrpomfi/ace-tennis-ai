@@ -9,3 +9,11 @@
 .metric-row b{text-align:right;color:var(--navy);font-size:10px}
 .entry h3{font-size:12px;color:var(--navy);margin:17px 0 7px}
 .entry ul{padding-left:18px;margin:7px 0;color:#65717e;font-size:10px;line-height:1.5}
+
+/* ACE Movement Lab – Winkelkurven */
+.angle-chart{margin:12px 0 18px;padding:12px;border:1px solid var(--line);border-radius:11px;background:#fbfcfd}
+.angle-chart>b{display:block;font-size:11px;color:var(--navy);margin-bottom:8px}
+.angle-chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart-legend{display:flex;gap:16px;margin:0 0 4px}
+.chart-legend-item{display:flex;align-items:center;gap:5px;font-size:9px;color:#778391}
+.chart-legend-item i{display:inline-block;width:9px;height:9px;border-radius:50%}
