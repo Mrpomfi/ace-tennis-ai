@@ -111,6 +111,7 @@ async function runTest(){
   base=await ort.InferenceSession.create(baseBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
   for(let i=0;i<frames.length;i++){
    const f=frames[i],meta=makeInput(f.canvas),t0=performance.now();
+   if(base.inputNames.length!==1)throw Error('CourtSide erwartet einen einzelnen Bildeingang; gefunden: '+base.inputNames.join(', '));
    const out=await base.run({[base.inputNames[0]]:meta.tensor});
    const boxes=parseBase(out,meta,f.canvas,threshold);baseResults.push(boxes);
    baseTimes.push(performance.now()-t0);baseTotal+=boxes.length;
@@ -122,7 +123,12 @@ async function runTest(){
   say('CourtSide abgeschlossen. YOLO-World wird geladen …');
   const worldBytes=await (await fetch(WORLD)).arrayBuffer();
   world=await ort.InferenceSession.create(worldBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
+  const requiredInputs=['images','txt_feats'];
+  const missing=requiredInputs.filter(name=>!world.inputNames.includes(name));
+  if(missing.length)throw Error('YOLO-World-Eingänge fehlen: '+missing.join(', ')+'. Gefunden: '+world.inputNames.join(', '));
+  if(world.outputNames.length!==1)throw Error('Unerwartete YOLO-World-Ausgaben: '+world.outputNames.join(', '));
   textFeatures=await createClipFeatures();
+  if(textFeatures.dims[1]!==2||textFeatures.dims[2]!==512)throw Error('CLIP-Textmerkmale haben eine unerwartete Form: '+textFeatures.dims.join('×'));
   for(let i=0;i<frames.length;i++){
    const f=frames[i],meta=makeInput(f.canvas),t0=performance.now();
    const out=await world.run({images:meta.tensor,txt_feats:textFeatures});
