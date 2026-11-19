@@ -52,7 +52,9 @@ body:has(.skeleton-player.is-expanded){overflow:hidden}
 .skeleton-controls select{flex:0 0 auto;width:64px;border:0;border-radius:7px;padding:8px 4px;background:#2b3948;color:#fff;font-size:11px;font-weight:700}
 
 /* Separate, gut bedienbare Geschwindigkeitswahl unter dem Videoplayer */
-.skeleton-speed-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;background:#202d3b;color:#fff;border-top:1px solid #3a4653;line-height:1.2}
-.skeleton-speed-row label{font-size:11px;font-weight:700}
-.skeleton-speed-row select{width:auto;min-width:175px;max-width:65%;border:1px solid #536273;border-radius:8px;padding:9px 10px;background:#2b3948;color:#fff;font-size:12px;font-weight:700}
+.skeleton-speed-row{display:flex;align-items:center;flex-wrap:wrap;gap:9px;padding:9px 11px;background:#202d3b;color:#fff;border-top:1px solid #3a4653;line-height:1.2}
+.skeleton-speed-label{font-size:11px;font-weight:700;white-space:nowrap}
+.skeleton-speed-buttons{display:flex;flex:1;flex-wrap:wrap;gap:6px}
+.skeleton-speed-buttons button{border:1px solid #536273;border-radius:7px;padding:9px 10px;background:#2b3948;color:#fff;font-size:12px;font-weight:700;min-width:48px;touch-action:manipulation}
+.skeleton-speed-buttons button.active{background:#c7f36b;border-color:#c7f36b;color:#101b2a}
 .skeleton-player.is-expanded .skeleton-speed-row{width:100%;flex:0 0 auto;padding-bottom:max(9px,env(safe-area-inset-bottom))}
