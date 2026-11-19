@@ -417,34 +417,33 @@ function poseAtTime(frames,time){
 }
 function selectRacketCandidate(candidates,landmarks){
   if(!Array.isArray(candidates)||!candidates.length||!landmarks)return null;
-  const point=(i)=>landmarks[i]&&(landmarks[i].visibility??1)>.35?landmarks[i]:null;
+  const point=(i)=>landmarks[i]&&(landmarks[i].visibility??1)>.45?landmarks[i]:null;
   const shoulders=[point(11),point(12)].filter(Boolean),hips=[point(23),point(24)].filter(Boolean);
-  if(!shoulders.length||!hips.length)return null;
+  if(shoulders.length<2||hips.length<2)return null;
   const avg=items=>({x:items.reduce((n,p)=>n+p.x,0)/items.length,y:items.reduce((n,p)=>n+p.y,0)/items.length});
   const torso=Math.max(.06,Math.hypot(avg(shoulders).x-avg(hips).x,avg(shoulders).y-avg(hips).y));
-  const arms=[[13,15],[14,16]].map(([elbowId,wristId])=>({elbow:point(elbowId),wrist:point(wristId)})).filter(a=>a.wrist);
+  const arms=[[13,15],[14,16]].map(([elbowId,wristId])=>({elbow:point(elbowId),wrist:point(wristId)})).filter(a=>a.elbow&&a.wrist);
   if(!arms.length)return null;
   let selected=null,bestRank=-Infinity;
   for(const candidate of candidates){
     const cx=candidate.x+candidate.w/2,cy=candidate.y+candidate.h/2;
-    let distance=Infinity;
+    let bestWristDistance=Infinity,bestArmDistance=Infinity;
     for(const arm of arms){
       const wristDistance=Math.hypot(cx-arm.wrist.x,cy-arm.wrist.y);
-      let armDistance=wristDistance;
-      if(arm.elbow){
-        const dx=arm.wrist.x-arm.elbow.x,dy=arm.wrist.y-arm.elbow.y;
-        const length2=dx*dx+dy*dy;
-        const t=length2?Math.max(0,Math.min(1,((cx-arm.elbow.x)*dx+(cy-arm.elbow.y)*dy)/length2)):1;
-        armDistance=Math.min(armDistance,Math.hypot(cx-(arm.elbow.x+t*dx),cy-(arm.elbow.y+t*dy))+.12*torso);
-      }
-      distance=Math.min(distance,armDistance);
+      const dx=arm.wrist.x-arm.elbow.x,dy=arm.wrist.y-arm.elbow.y;
+      const length2=dx*dx+dy*dy;
+      const t=length2?Math.max(0,Math.min(1,((cx-arm.elbow.x)*dx+(cy-arm.elbow.y)*dy)/length2)):1;
+      const armDistance=Math.hypot(cx-(arm.elbow.x+t*dx),cy-(arm.elbow.y+t*dy));
+      if(armDistance<bestArmDistance){bestArmDistance=armDistance;bestWristDistance=wristDistance;}
     }
-    const relativeDistance=distance/torso;
-    // A racket may extend well beyond the hand, but a detection on the floor or furniture
-    // is not a plausible racket held by the player.
-    if(relativeDistance>2.0)continue;
-    const rank=candidate.score/(1+relativeDistance*.65);
-    if(rank>bestRank){bestRank=rank;selected={...candidate,handDistance:relativeDistance};}
+    const wristRatio=bestWristDistance/torso,armRatio=bestArmDistance/torso;
+    // The box centre must be close to the hand as well as the forearm.
+    // This rejects floor/furniture false positives even when their confidence is high.
+    if(wristRatio>1.35||armRatio>.55)continue;
+    // Implausibly large boxes are usually background objects, not a racket near the hand.
+    if(candidate.w>1.25||candidate.h>1.25||candidate.w*candidate.h>.22)continue;
+    const rank=candidate.score/(1+wristRatio*.8+armRatio*.5);
+    if(rank>bestRank){bestRank=rank;selected={...candidate,handDistance:wristRatio,armDistance:armRatio};}
   }
   return selected;
 }
