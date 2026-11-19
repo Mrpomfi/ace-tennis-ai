@@ -51,7 +51,7 @@ async function loadOnnxRuntime(){
   }
   // GitHub Pages may serve .mjs with a MIME type Safari rejects for dynamic module imports.
   // Serve the identical ONNX Runtime module through a .js URL instead.
-  ort.env.wasm.wasmPaths={mjs:'./vendor/onnxruntime-web/ort-wasm-simd-threaded.js',wasm:'./vendor/onnxruntime-web/ort-wasm-simd-threaded.wasm'};
+  ort.env.wasm.wasmPaths={mjs:new URL('./vendor/onnxruntime-web/ort-wasm-simd-threaded.js',document.baseURI).href,wasm:new URL('./vendor/onnxruntime-web/ort-wasm-simd-threaded.wasm',document.baseURI).href};
   ort.env.wasm.numThreads=1;
   return ort;
 }
@@ -62,7 +62,19 @@ async function getRacketTask(){
   const response=await fetch(RACKET_MODEL_URL);
   if(!response.ok)throw Error('Tennis-Schläger-Modell konnte nicht geladen werden ('+response.status+').');
   const modelBytes=await response.arrayBuffer();
-  const session=await ort.InferenceSession.create(modelBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
+  const moduleUrl=new URL('./vendor/onnxruntime-web/ort-wasm-simd-threaded.js',document.baseURI);
+  const moduleResponse=await fetch(moduleUrl,{cache:'no-store'});
+  const moduleType=moduleResponse.headers.get('content-type')||'unbekannt';
+  if(!moduleResponse.ok)throw Error('WASM-JS-Modul nicht erreichbar: HTTP '+moduleResponse.status+' · '+moduleUrl.href);
+  if(!/(javascript|ecmascript)/i.test(moduleType))throw Error('WASM-JS-Modul hat falschen MIME-Typ: '+moduleType+' · '+moduleUrl.href);
+  const wasmUrl=new URL('./vendor/onnxruntime-web/ort-wasm-simd-threaded.wasm',document.baseURI);
+  const wasmHead=await fetch(wasmUrl,{method:'HEAD',cache:'no-store'});
+  const wasmType=wasmHead.headers.get('content-type')||'unbekannt';
+  if(!wasmHead.ok)throw Error('WASM-Binärdatei nicht erreichbar: HTTP '+wasmHead.status+' · '+wasmUrl.href);
+  if(wasmType==='text/html')throw Error('WASM-Binärdatei liefert HTML statt WASM · '+wasmUrl.href);
+  let session;
+  try{session=await ort.InferenceSession.create(modelBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});}
+  catch(error){throw Error('ONNX-Initialisierung fehlgeschlagen. Modul: HTTP '+moduleResponse.status+', MIME '+moduleType+'. WASM: HTTP '+wasmHead.status+', MIME '+wasmType+'. Ursache: '+String(error?.stack||error?.message||error));}
   const inputName=session.inputNames[0],outputName=session.outputNames[0];
   const inputCanvas=document.createElement('canvas');
   inputCanvas.width=640;inputCanvas.height=640;
@@ -266,7 +278,7 @@ async function startForehandAnalysis(videoId){
     await new Promise((resolve,reject)=>{videoEl.onloadedmetadata=resolve;videoEl.onerror=()=>reject(Error('Videoformat kann nicht gelesen werden.'));});
     if(!Number.isFinite(videoEl.duration)||videoEl.duration<=0)throw Error('Videolänge konnte nicht ermittelt werden.');
     task=await getPoseTask();
-    try{racketTask=await getRacketTask();}catch(racketError){racketInitError=String(racketError?.message||racketError);console.warn('Schläger-Erkennung nicht verfügbar:',racketError);status.textContent='Schläger-Modell nicht verfügbar – Körperanalyse läuft weiter …';}
+    try{racketTask=await getRacketTask();}catch(racketError){racketInitError=String(racketError?.stack||racketError?.message||racketError);console.warn('Schläger-Erkennung nicht verfügbar:',racketError);status.textContent='Schläger-Modell nicht verfügbar – Körperanalyse läuft weiter …';}
     const duration=videoEl.duration,count=Math.min(96,Math.max(24,Math.ceil(duration*12)));
     const times=Array.from({length:count},(_,i)=>Math.min(Math.max(0.05,duration-0.05),0.05+(Math.max(0,duration-0.1)*i/Math.max(1,count-1))));
     const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
