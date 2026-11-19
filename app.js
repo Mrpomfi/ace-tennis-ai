@@ -23,16 +23,15 @@ async function renderVideos(){const items=(await all('videos')).sort((a,b)=>b.cr
 card.querySelector('[data-delete]').onclick=async()=>{if(confirm('Dieses Video und seine Notiz löschen?')){await del('videos',v.id);for(const a of await all('analyses'))if(a.videoId===v.id)await del('analyses',a.id);URL.revokeObjectURL(url);renderVideos();renderHome()}};card.querySelector('[data-export]').onclick=()=>{const a=document.createElement('a');a.href=url;a.download=v.name||'ace-video';a.click()};}}
 
 // ACE Movement Lab – lokale Einzelbildanalyse mit MediaPipe Pose Landmarker.
-let poseTaskPromise=null, analysisBusy=false;
+let analysisBusy=false;
 const MP_MODEL='./vendor/mediapipe/pose_landmarker_lite.task';
 async function getPoseTask(){
-  if(!poseTaskPromise)poseTaskPromise=(async()=>{
-    setStatus('analysisStatus','Bewegungsmodell wird geladen. Beim ersten Mal ist eine Internetverbindung nötig …');
-    const {FilesetResolver,PoseLandmarker}=await import('./vendor/mediapipe/vision_bundle.mjs');
-    const vision=await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');
-    return await PoseLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:MP_MODEL,delegate:'GPU'},runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:.45,minPosePresenceConfidence:.45,minTrackingConfidence:.45});
-  })().catch(e=>{poseTaskPromise=null;throw e});
-  return poseTaskPromise;
+  setStatus('analysisStatus','Bewegungsmodell wird vorbereitet …');
+  const {FilesetResolver,PoseLandmarker}=await import('./vendor/mediapipe/vision_bundle.mjs');
+  const vision=await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');
+  // Jede Videoanalyse erhält eine frische Instanz. So kann der VIDEO-Tracker
+  // keine Landmarken aus einer vorherigen Aufnahme in das nächste Video tragen.
+  return await PoseLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:MP_MODEL,delegate:'GPU'},runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:.45,minPosePresenceConfidence:.45,minTrackingConfidence:.45});
 }
 function angle3(a,b,c){const ab=[a.x-b.x,a.y-b.y],cb=[c.x-b.x,c.y-b.y];const dot=ab[0]*cb[0]+ab[1]*cb[1],mag=Math.hypot(...ab)*Math.hypot(...cb);if(!mag)return null;return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI)}
 const POSE_LINKS=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28]];
@@ -81,7 +80,7 @@ function detectStrokePhases(frames){
 }
 async function startForehandAnalysis(videoId){
   if(analysisBusy)return;analysisBusy=true;const status=$('analysisStatus'),out=$('analysisResult');out.innerHTML='';
-  let videoEl,objectUrl;
+  let videoEl,objectUrl,task;
   try{
     const item=await get('videos',videoId);if(!item)throw Error('Video nicht gefunden');
     if(item.shot!=='Vorhand')throw Error('Bitte ein Vorhandvideo auswählen.');
@@ -89,7 +88,7 @@ async function startForehandAnalysis(videoId){
     objectUrl=URL.createObjectURL(item.blob);videoEl=document.createElement('video');videoEl.src=objectUrl;videoEl.muted=true;videoEl.playsInline=true;videoEl.preload='auto';
     await new Promise((resolve,reject)=>{videoEl.onloadedmetadata=resolve;videoEl.onerror=()=>reject(Error('Videoformat kann nicht gelesen werden.'));});
     if(!Number.isFinite(videoEl.duration)||videoEl.duration<=0)throw Error('Videolänge konnte nicht ermittelt werden.');
-    const task=await getPoseTask();
+    task=await getPoseTask();
     const duration=videoEl.duration,count=Math.min(96,Math.max(24,Math.ceil(duration*12)));
     const times=Array.from({length:count},(_,i)=>Math.min(Math.max(0.05,duration-0.05),0.05+(Math.max(0,duration-0.1)*i/Math.max(1,count-1))));
     const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
@@ -122,7 +121,7 @@ async function startForehandAnalysis(videoId){
     status.textContent='Analyse abgeschlossen · '+detected+' von '+times.length+' Bildern mit erkennbarer Körperpose. Ergebnis lokal gespeichert.';
     renderAnalysisResult(result,item);
   }catch(e){status.textContent='Analyse nicht möglich: '+(e.message||'Unbekannter Fehler')+'. Bitte ein gut beleuchtetes Video mit vollständig sichtbarem Körper verwenden.'}
-  finally{if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
+  finally{if(task){try{task.close()}catch(e){console.warn('PoseLandmarker konnte nicht geschlossen werden:',e)}}if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
 }
 
 function angleChart(frames,keys,title){
