@@ -104,6 +104,20 @@ async function getRacketTask(){
       const rank=dims.length,shape=dims.slice(-2);
       const candidates=[],debugCandidates=[];
       const diag={outputShape:dims.join(' × '),format:'unbekannt',maxRacketScore:0,maxOtherScore:0,maxAnyScore:0,validRows:0,paddedRows:0,classCounts:{},topRows:[],above01:0,above05:0,above15:0,rawCandidates:0};
+      const mapBox=(x1,y1,x2,y2,score,classId)=>{
+        if(!Number.isFinite(score)||![x1,y1,x2,y2].every(Number.isFinite))return null;
+        const x=Math.max(0,Math.min(canvas.width,(x1-offsetX)/scale));
+        const y=Math.max(0,Math.min(canvas.height,(y1-offsetY)/scale));
+        const right=Math.max(0,Math.min(canvas.width,(x2-offsetX)/scale));
+        const bottom=Math.max(0,Math.min(canvas.height,(y2-offsetY)/scale));
+        if(right<=x||bottom<=y)return null;
+        return {x:x/canvas.width,y:y/canvas.height,w:(right-x)/canvas.width,h:(bottom-y)/canvas.height,score,classId,className:RACKET_CLASS_NAMES[classId]||('Klasse '+classId)};
+      };
+      const addDebugBox=(x1,y1,x2,y2,score,classId)=>{
+        if(score<(classId===0?.01:.05))return;
+        const box=mapBox(x1,y1,x2,y2,score,classId);
+        if(box)debugCandidates.push(box);
+      };
       const addBox=(x1,y1,x2,y2,score)=>{
         if(!Number.isFinite(score))return;
         diag.rawCandidates++;
@@ -111,16 +125,9 @@ async function getRacketTask(){
         if(score>=.01)diag.above01++;
         if(score>=.05)diag.above05++;
         if(score>=.15)diag.above15++;
-        if(score<.05||![x1,y1,x2,y2].every(Number.isFinite))return;
-        const x=Math.max(0,Math.min(canvas.width,(x1-offsetX)/scale));
-        const y=Math.max(0,Math.min(canvas.height,(y1-offsetY)/scale));
-        const right=Math.max(0,Math.min(canvas.width,(x2-offsetX)/scale));
-        const bottom=Math.max(0,Math.min(canvas.height,(y2-offsetY)/scale));
-        if(right<=x||bottom<=y)return;
-        const box={x:x/canvas.width,y:y/canvas.height,w:(right-x)/canvas.width,h:(bottom-y)/canvas.height,score};
-        if(score>=.01)debugCandidates.push(box);
         if(score<.05)return;
-        candidates.push(box);
+        const box=mapBox(x1,y1,x2,y2,score,0);
+        if(box)candidates.push(box);
       };
       if(rank===3&&shape[1]===6){
         diag.format='NMS [1, detections, 6]';
@@ -134,7 +141,8 @@ async function getRacketTask(){
           if(!(Number.isFinite(score)&&score>0&&x2>x1&&y2>y1)){diag.paddedRows++;continue;}
           diag.validRows++;
           const classKey=String(classId);diag.classCounts[classKey]=(diag.classCounts[classKey]||0)+1;
-          diag.topRows.push({score,classId,x1,y1,x2,y2,boxCenterX:Number(((x1+x2)/2).toFixed(1)),boxCenterY:Number(((y1+y2)/2).toFixed(1)),boxWidth:Number((x2-x1).toFixed(1)),boxHeight:Number((y2-y1).toFixed(1))});
+          diag.topRows.push({score,classId,x1,y1,x2,y2,boxCenterX:Number(((x1+x2)/2).toFixed(1)),boxCenterY:Number((y1+y2)/2).toFixed(1),boxWidth:Number((x2-x1).toFixed(1)),boxHeight:Number((y2-y1).toFixed(1))});
+          addDebugBox(x1,y1,x2,y2,score,classId);
           if(classId!==0){diag.maxOtherScore=Math.max(diag.maxOtherScore,score);continue;}
           addBox(x1,y1,x2,y2,score);
         }
@@ -144,8 +152,10 @@ async function getRacketTask(){
         const count=shape[1];
         for(let i=0;i<count;i++){
           const score=values[4*count+i],classId=Math.round(values[5*count+i]);
-          if(classId!==0)continue;
-          addBox(values[i],values[count+i],values[2*count+i],values[3*count+i],score);
+          const x1=values[i],y1=values[count+i],x2=values[2*count+i],y2=values[3*count+i];
+          addDebugBox(x1,y1,x2,y2,score,classId);
+          if(classId===0)addBox(x1,y1,x2,y2,score);
+          else if(Number.isFinite(score))diag.maxOtherScore=Math.max(diag.maxOtherScore,score);
         }
       }else if(rank===3&&shape[0]>=5&&shape[0]<=64){
         diag.format='YOLO raw [1, channels, candidates]';
@@ -155,9 +165,9 @@ async function getRacketTask(){
           let classId=0,score=-Infinity;
           for(let c=4;c<channels;c++){const value=values[c*count+i];if(value>score){score=value;classId=c-4;}}
           if(classId===0&&Number.isFinite(score))diag.maxRacketScore=Math.max(diag.maxRacketScore,score);else if(Number.isFinite(score))diag.maxOtherScore=Math.max(diag.maxOtherScore,score);
-          if(classId!==0||!Number.isFinite(score))continue;
           const cx=values[i],cy=values[count+i],bw=values[2*count+i],bh=values[3*count+i];
-          addBox(cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2,score);
+          addDebugBox(cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2,score,classId);
+          if(classId===0)addBox(cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2,score);
         }
       }else if(rank===3&&shape[1]>=5&&shape[1]<=64){
         diag.format='YOLO raw [1, candidates, channels]';
@@ -168,9 +178,9 @@ async function getRacketTask(){
           let classId=0,score=-Infinity;
           for(let c=4;c<channels;c++){const value=values[j+c];if(value>score){score=value;classId=c-4;}}
           if(classId===0&&Number.isFinite(score))diag.maxRacketScore=Math.max(diag.maxRacketScore,score);else if(Number.isFinite(score))diag.maxOtherScore=Math.max(diag.maxOtherScore,score);
-          if(classId!==0||!Number.isFinite(score))continue;
           const cx=values[j],cy=values[j+1],bw=values[j+2],bh=values[j+3];
-          addBox(cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2,score);
+          addDebugBox(cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2,score,classId);
+          if(classId===0)addBox(cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2,score);
         }
       }else{
         console.warn('Unbekanntes Schläger-Modell-Ausgabeformat:',dims);
@@ -630,7 +640,8 @@ function drawPlaybackPose(canvas,pose,color,racket,candidates=[]){
     const x=candidate.x*w,y=candidate.y*h,bw=candidate.w*w,bh=candidate.h*h;
     ctx.save();ctx.strokeStyle='#ffd54a';ctx.lineWidth=Math.max(2,w/260);ctx.setLineDash([Math.max(4,w/120),Math.max(3,w/180)]);
     ctx.strokeRect(x,y,bw,bh);ctx.setLineDash([]);ctx.font='bold '+Math.max(11,w/48)+'px sans-serif';
-    const label='Modell '+(candidate.score*100).toFixed(1)+'%';ctx.fillStyle='rgba(35,42,52,.88)';ctx.fillRect(x,Math.max(0,y-18),ctx.measureText(label).width+8,18);
+    const className=candidate.className||('Klasse '+(candidate.classId??'?'));
+    const label=className+' '+(candidate.score*100).toFixed(1)+'%';ctx.fillStyle='rgba(35,42,52,.9)';ctx.fillRect(x,Math.max(0,y-18),ctx.measureText(label).width+8,18);
     ctx.fillStyle='#ffd54a';ctx.textBaseline='middle';ctx.fillText(label,x+4,Math.max(9,y-9));ctx.restore();
   }
   if(racket){
