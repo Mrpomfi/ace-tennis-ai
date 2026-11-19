@@ -213,9 +213,11 @@ async function detectRacket(detector,canvas,landmarks){
     if(length<4)return [];
     // Multi-scale crops: a tight, upscaled hand/racket crop plus the wider
     // context crop. The original full-frame pass remains the first inference.
+    // Keep the first crop close to the grip, then search farther along the
+    // forearm axis so a racket head angled away from the hand remains visible.
     return [
-      {factor:2.0,offset:0},
-      {factor:3.2,offset:.5}
+      {factor:2.4,offset:.25},
+      {factor:3.8,offset:.8}
     ].map(({factor,offset})=>{
       const sideLength=torso*factor,cx=wx+dx/length*torso*offset,cy=wy+dy/length*torso*offset;
       const sx=Math.max(0,Math.min(width-sideLength,cx-sideLength/2));
