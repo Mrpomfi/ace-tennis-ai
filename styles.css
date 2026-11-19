@@ -43,7 +43,7 @@
 .skeleton-controls input{flex:1;min-width:35px;accent-color:#c7f36b}
 .skeleton-controls span{font-size:10px;white-space:nowrap}
 .skeleton-player.is-expanded{position:fixed;inset:0;z-index:99999;width:100vw;height:100dvh;border-radius:0;display:flex;flex-direction:column;justify-content:center;background:#000;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-.skeleton-player.is-expanded .skeleton-stage{width:100%;height:calc(100% - 54px);max-height:calc(100% - 54px);aspect-ratio:auto;flex:1;display:flex;align-items:center;justify-content:center}
+.skeleton-player.is-expanded{align-items:center}.skeleton-player.is-expanded .skeleton-stage{max-width:100%;max-height:calc(100% - 54px);aspect-ratio:auto;display:flex;align-items:center;justify-content:center;align-self:center}
 .skeleton-player.is-expanded .skeleton-stage video{width:100%;height:100%;object-fit:contain}
 .skeleton-player.is-expanded .skeleton-controls{flex:0 0 54px;padding:7px 10px}
 body:has(.skeleton-player.is-expanded){overflow:hidden}
