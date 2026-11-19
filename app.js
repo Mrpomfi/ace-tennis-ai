@@ -24,6 +24,7 @@ card.querySelector('[data-delete]').onclick=async()=>{if(confirm('Dieses Video u
 
 // ACE Movement Lab – lokale Einzelbildanalyse mit MediaPipe Pose Landmarker.
 let analysisBusy=false,analysisPlaybackUrl=null,playbackFrame=null;
+const RACKET_CLASS_NAMES={0:'Tennisschläger',1:'Tennisball',2:'untere Auszone',3:'Spielfeld',4:'linke Doppelauslinie',5:'linkes Aufschlagfeld',6:'Netz',7:'rechte Doppelauslinie',8:'rechtes Aufschlagfeld',9:'obere Auszone'};
 const MP_MODEL='./vendor/mediapipe/pose_landmarker_lite.task';
 async function getPoseTask(){
   setStatus('analysisStatus','Bewegungsmodell wird vorbereitet …');
@@ -110,7 +111,7 @@ async function getRacketTask(){
         if(score>=.01)diag.above01++;
         if(score>=.05)diag.above05++;
         if(score>=.15)diag.above15++;
-        if(score<.15||![x1,y1,x2,y2].every(Number.isFinite))return;
+        if(score<.05||![x1,y1,x2,y2].every(Number.isFinite))return;
         const x=Math.max(0,Math.min(canvas.width,(x1-offsetX)/scale));
         const y=Math.max(0,Math.min(canvas.height,(y1-offsetY)/scale));
         const right=Math.max(0,Math.min(canvas.width,(x2-offsetX)/scale));
@@ -439,14 +440,14 @@ function drawPlaybackPose(canvas,pose,color,racket){
     const rawX=racket.x*w,rawY=racket.y*h,rawW=racket.w*w,rawH=racket.h*h;
     const pad=Math.max(7,w/100),x=Math.max(0,rawX-pad),y=Math.max(0,rawY-pad);
     const bw=Math.min(w-x,rawW+pad*2),bh=Math.min(h-y,rawH+pad*2);
-    ctx.save();ctx.fillStyle='rgba(255,45,55,.18)';ctx.fillRect(x,y,bw,bh);
-    ctx.strokeStyle='#ff2638';ctx.lineWidth=Math.max(5,w/140);ctx.setLineDash([]);
+    ctx.save();ctx.fillStyle='rgba(255,159,10,.16)';ctx.fillRect(x,y,bw,bh);
+    ctx.strokeStyle='#ff9f0a';ctx.lineWidth=Math.max(5,w/140);ctx.setLineDash([]);
     ctx.strokeRect(x,y,bw,bh);
-    const label='SCHLÄGER '+Math.round(racket.score*100)+'%';
+    const label='SCHLÄGER-KANDIDAT '+Math.round(racket.score*100)+'%';
     ctx.font='bold '+Math.max(14,w/34)+'px sans-serif';
     const labelW=ctx.measureText(label).width+16,labelH=Math.max(24,w/24);
     const labelY=Math.max(0,y-labelH-3);
-    ctx.fillStyle='#ff2638';ctx.fillRect(x,labelY,labelW,labelH);
+    ctx.fillStyle='#b86b00';ctx.fillRect(x,labelY,labelW,labelH);
     ctx.fillStyle='#fff';ctx.textBaseline='middle';ctx.fillText(label,x+8,labelY+labelH/2);
     ctx.beginPath();ctx.arc(rawX+rawW/2,rawY+rawH/2,Math.max(5,w/100),0,Math.PI*2);ctx.fillStyle='#ff2638';ctx.fill();
     ctx.restore();
@@ -497,7 +498,7 @@ function renderAnalysisResult(r,v){
   const phases=(r.phases||[]).map(p=>'<div class="phase"><b>'+p.name+'</b><small>Linker Ellenbogen: '+(p.leftElbow?.avg!=null?p.leftElbow.avg+'°':'—')+' · Rechter Ellenbogen: '+(p.rightElbow?.avg!=null?p.rightElbow.avg+'°':'—')+'</small><small>Linkes Knie: '+(p.leftKnee?.avg!=null?p.leftKnee.avg+'°':'—')+' · Rechtes Knie: '+(p.rightKnee?.avg!=null?p.rightKnee.avg+'°':'—')+'</small></div>').join('');
   const coverageText=r.coverage>=80?'Die Körperpose wurde in einem großen Teil der Stichproben erkannt.':r.coverage>=50?'Die Erkennung war wechselhaft. Einzelne Messwerte können fehlen.':'Die Erkennung war zu unsicher für eine verlässliche Bewegungsbeobachtung.';
   const stroke=r.strokePhases;
-  const rd=r.racketDiagSummary||{},racketMarkup='<h3>Schläger-Erkennung (Diagnose)</h3><p class="tiny">'+(rd.modelLoaded?'Modell geladen · ':'Modell nicht geladen · ')+(r.racketChecked?(r.racketSamples+' von '+r.racketChecked+' Bildern mit Erkennung ('+Math.round(r.racketSamples/r.racketChecked*100)+'%).'):'Keine Modell-Inferenz durchgeführt.')+'</p><details class="diagnostic"><summary>Technische Schläger-Diagnose anzeigen</summary><p class="tiny">Modell-Ausgabe: '+esc(rd.outputShape||'—')+' · Format: '+esc(rd.format||'—')+'</p><p class="tiny">Höchster Schläger-Score (Klasse 0): '+(Number(rd.maxRacketScore||0)*100).toFixed(1)+'% · höchste andere Klasse: '+(Number(rd.maxOtherScore||0)*100).toFixed(1)+'% · höchster Score insgesamt: '+(Number(rd.maxAnyScore||0)*100).toFixed(1)+'%</p><p class="tiny">Gültige Modelltreffer: '+(rd.validRows||0)+' · Leere NMS-Plätze (Padding): '+(rd.paddedRows||0)+'</p><p class="tiny">Klassenverteilung (nur gültige Treffer): '+esc(Object.entries(rd.classCounts||{}).map(([k,v])=>'Klasse '+k+': '+v).join(' · ')||'Keine gültigen Treffer')+'</p><p class="tiny">Top-Ausgaben: '+esc((rd.topRows||[]).map(x=>'Kl. '+x.classId+' / '+(Number(x.score)*100).toFixed(1)+'%').join(' · ')||'—')+'</p><p class="tiny">Kandidaten über 1%: '+(rd.above01||0)+' · über 5%: '+(rd.above05||0)+' · über 15%: '+(rd.above15||0)+'</p><p class="tiny">Technische Fehler: '+(rd.errors||0)+(rd.errorSamples?.length?' · '+rd.errorSamples.map(esc).join(' / '):'')+'</p><p class="tiny">Die Diagnosewerte werden nur lokal im Analysebericht gespeichert.</p></details>';
+  const rd=r.racketDiagSummary||{},racketMarkup='<h3>Schläger-Erkennung (Diagnose)</h3><p class="tiny">'+(rd.modelLoaded?'Modell geladen · ':'Modell nicht geladen · ')+(r.racketChecked?(r.racketSamples+' von '+r.racketChecked+' Bildern mit Erkennung ('+Math.round(r.racketSamples/r.racketChecked*100)+'%).'):'Keine Modell-Inferenz durchgeführt.')+'</p><details class="diagnostic"><summary>Technische Schläger-Diagnose anzeigen</summary><p class="tiny">Modell-Ausgabe: '+esc(rd.outputShape||'—')+' · Format: '+esc(rd.format||'—')+'</p><p class="tiny">Höchster Schläger-Score (Klasse 0): '+(Number(rd.maxRacketScore||0)*100).toFixed(1)+'% · höchste andere Klasse: '+(Number(rd.maxOtherScore||0)*100).toFixed(1)+'% · höchster Score insgesamt: '+(Number(rd.maxAnyScore||0)*100).toFixed(1)+'%</p><p class="tiny">Gültige Modelltreffer: '+(rd.validRows||0)+' · Leere NMS-Plätze (Padding): '+(rd.paddedRows||0)+'</p><p class="tiny">Klassenverteilung (nur gültige Treffer): '+esc(Object.entries(rd.classCounts||{}).map(([k,v])=>(RACKET_CLASS_NAMES[k]||'Klasse '+k)+': '+v).join(' · ')||'Keine gültigen Treffer')+'</p><p class="tiny">Top-Ausgaben: '+esc((rd.topRows||[]).map(x=>(RACKET_CLASS_NAMES[x.classId]||'Klasse '+x.classId)+' / '+(Number(x.score)*100).toFixed(1)+'%').join(' · ')||'—')+'</p><p class="tiny">Kandidaten über 1%: '+(rd.above01||0)+' · über 5%: '+(rd.above05||0)+' · über 15%: '+(rd.above15||0)+'</p><p class="tiny">Technische Fehler: '+(rd.errors||0)+(rd.errorSamples?.length?' · '+rd.errorSamples.map(esc).join(' / '):'')+'</p><p class="tiny">Die Diagnosewerte werden nur lokal im Analysebericht gespeichert.</p></details>';
   const strokeMarkup=stroke?.phases?.length?'<div class="stroke-phase-list">'+stroke.phases.map(p=>'<div class="stroke-phase"><b>'+esc(p.name)+'</b><small>'+p.start.toFixed(2)+'–'+p.end.toFixed(2)+' s</small></div>').join('')+'</div>':'<p class="tiny">'+esc(stroke?.reason||'Keine zuverlässige Phasenschätzung möglich.')+'</p>';
   const sideLabel=stroke?.side==='left'?'die linke Seite (größere erkannte Handgelenkbewegung)':stroke?.side==='right'?'die rechte Seite (größere erkannte Handgelenkbewegung)':'keine Seite';
   const tips=[];if(r.coverage<80)tips.push('Filme bei gutem Licht und halte Kopf, Füße und beide Arme während des gesamten Schlages im Bild.');if(r.angle==='unknown')tips.push('Wähle beim nächsten Video die Kameraperspektive aus.');tips.push('Nutze möglichst dieselbe Kameraposition und denselben Abstand, wenn du Fortschritte vergleichen möchtest.');
