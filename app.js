@@ -713,7 +713,7 @@ function racketAtTime(frames,time){
   if(before&&after&&before!==after&&after.time-before.time<=.34){
     const ratio=(time-before.time)/(after.time-before.time);
     const a=before.racket,b=after.racket;
-    return {x:a.x+(b.x-a.x)*ratio,y:a.y+(b.y-a.y)*ratio,w:a.w+(b.w-a.w)*ratio,h:a.h+(b.h-a.h)*ratio,score:Math.min(a.score,b.score),bridged:true};
+    return {x:a.x+(b.x-a.x)*ratio,y:a.y+(b.y-a.y)*ratio,w:a.w+(b.w-a.w)*ratio,h:a.h+(b.h-a.h)*ratio,score:Math.min(a.score,b.score),source:a.source===b.source?a.source:'Bildverfolgung',trackingScore:Math.min(a.trackingScore||0,b.trackingScore||0),bridged:true};
   }
   const nearest=before||after;
   return nearest&&Math.abs(nearest.time-time)<=.22?nearest.racket:null;
@@ -745,7 +745,7 @@ function drawPlaybackPose(canvas,pose,color,racket,candidates=[]){
     ctx.save();ctx.fillStyle='rgba(255,159,10,.16)';ctx.fillRect(x,y,bw,bh);
     ctx.strokeStyle='#ff9f0a';ctx.lineWidth=Math.max(5,w/140);ctx.setLineDash([]);
     ctx.strokeRect(x,y,bw,bh);
-    const label='SCHLÄGER-KANDIDAT '+Math.round(racket.score*100)+'%';
+    const label=(racket.source==='Bildverfolgung'?'SCHLÄGER-TRACKING '+Math.round((racket.trackingScore||0)*100)+'%':'SCHLÄGER-KANDIDAT '+Math.round(racket.score*100)+'%');
     ctx.font='bold '+Math.max(14,w/34)+'px sans-serif';
     const labelW=ctx.measureText(label).width+16,labelH=Math.max(24,w/24);
     const labelY=Math.max(0,y-labelH-3);
