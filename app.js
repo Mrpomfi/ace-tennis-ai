@@ -728,7 +728,7 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
     bestArmDistance:Number.isFinite(bestNearArm)?Number(bestNearArm.toFixed(3)):null,
     nearestCandidate,selected:!!selected,
     rejectedCourtLine,rejectedTooClose,rejectedTooFar,rejectedDirection,rejectedTorso,
-    rule:'Schlägerkopf außerhalb des Rumpfes mit Mindestabstand zum Handgelenk gesucht; Armrichtung und Linienform geprüft'
+    rule:'Hand-/Unterarm-Verbindung mit Segmentabstand geprüft; kompakte Treffer dürfen vor dem Rumpf liegen'
   };
   return selected;
 }
