@@ -33,34 +33,81 @@ async function getPoseTask(){
   // keine Landmarken aus einer vorherigen Aufnahme in das nächste Video tragen.
   return await PoseLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:MP_MODEL,delegate:'GPU'},runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:.45,minPosePresenceConfidence:.45,minTrackingConfidence:.45});
 }
-const RACKET_MODEL_URL='https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite';
-async function getRacketTask(){
-  setStatus('analysisStatus','Schläger-Erkennungsmodell wird vorbereitet …');
-  // FilesetResolver und ObjectDetector müssen aus dem lokalen MediaPipe-Modul
-  // geladen werden. Die frühere Version verwendete hier einen nicht verfügbaren
-  // Bezeichner außerhalb des Moduls – dadurch blieb die Erkennung deaktiviert.
-  const {FilesetResolver,ObjectDetector}=await import('./vendor/mediapipe/vision_bundle.mjs');
-  const vision=await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');
-  const cache=await caches.open('ace-tennis-racket-model-v1');
-  let response=await cache.match(RACKET_MODEL_URL);
-  if(!response){
-    setStatus('analysisStatus','Schläger-Modell wird einmalig heruntergeladen …');
-    response=await fetch(RACKET_MODEL_URL,{mode:'cors'});
-    if(!response.ok)throw Error('Schläger-Modell konnte nicht geladen werden ('+response.status+').');
-    await cache.put(RACKET_MODEL_URL,response.clone());
+const RACKET_MODEL_URL='./models/courtside-yolov11n.onnx';
+let ortLoadingPromise=null;
+async function loadOnnxRuntime(){
+  let ort=window.ort;
+  if(!ort?.InferenceSession){
+    if(!ortLoadingPromise){
+      ortLoadingPromise=new Promise((resolve,reject)=>{
+        const script=document.createElement('script');
+        script.src='./vendor/onnxruntime-web/ort.wasm.min.js';
+        script.onload=()=>window.ort?.InferenceSession?resolve(window.ort):reject(Error('ONNX Runtime Web konnte nicht gestartet werden.'));
+        script.onerror=()=>reject(Error('ONNX Runtime Web konnte nicht geladen werden.'));
+        document.head.appendChild(script);
+      }).catch(error=>{ortLoadingPromise=null;throw error;});
+    }
+    ort=await ortLoadingPromise;
   }
-  const bytes=new Uint8Array(await response.arrayBuffer());
-  const detector=await ObjectDetector.createFromModelBuffer(vision,bytes);
-  await detector.setOptions({runningMode:'IMAGE',scoreThreshold:.12,maxResults:12});
-  return detector;
+  ort.env.wasm.wasmPaths='./vendor/onnxruntime-web/';
+  ort.env.wasm.numThreads=1;
+  return ort;
 }
-function detectRacket(detector,canvas){
-  if(!detector)return null;
-  const detections=detector.detect(canvas).detections||[];
-  const matches=detections.flatMap(d=>(d.categories||[]).filter(c=>(c.categoryName||'').toLowerCase().trim()==='tennis racket').map(c=>({score:c.score,box:d.boundingBox}))).filter(x=>x.box&&x.score>=.12).sort((a,b)=>b.score-a.score);
-  if(!matches.length)return null;
-  const best=matches[0],b=best.box;
-  return {x:b.originX/canvas.width,y:b.originY/canvas.height,w:b.width/canvas.width,h:b.height/canvas.height,score:best.score};
+async function getRacketTask(){
+  setStatus('analysisStatus','Tennis-Schläger-Modell wird vorbereitet …');
+  const ort=await loadOnnxRuntime();
+  setStatus('analysisStatus','Tennis-Schläger-Modell wird geladen (ca. 11 MB, beim ersten Mal) …');
+  const response=await fetch(RACKET_MODEL_URL);
+  if(!response.ok)throw Error('Tennis-Schläger-Modell konnte nicht geladen werden ('+response.status+').');
+  const modelBytes=await response.arrayBuffer();
+  const session=await ort.InferenceSession.create(modelBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
+  const inputName=session.inputNames[0],outputName=session.outputNames[0];
+  const inputCanvas=document.createElement('canvas');
+  inputCanvas.width=640;inputCanvas.height=640;
+  const inputContext=inputCanvas.getContext('2d',{willReadFrequently:true});
+  const inputData=new Float32Array(3*640*640);
+  return {
+    async detect(canvas){
+      const scale=Math.min(640/canvas.width,640/canvas.height);
+      const scaledWidth=Math.round(canvas.width*scale),scaledHeight=Math.round(canvas.height*scale);
+      const offsetX=(640-scaledWidth)/2,offsetY=(640-scaledHeight)/2;
+      inputContext.fillStyle='rgb(114,114,114)';
+      inputContext.fillRect(0,0,640,640);
+      inputContext.drawImage(canvas,offsetX,offsetY,scaledWidth,scaledHeight);
+      const pixels=inputContext.getImageData(0,0,640,640).data;
+      const plane=640*640;
+      for(let i=0;i<plane;i++){
+        const p=i*4;
+        inputData[i]=pixels[p]/255;
+        inputData[i+plane]=pixels[p+1]/255;
+        inputData[i+plane*2]=pixels[p+2]/255;
+      }
+      const tensor=new ort.Tensor('float32',inputData,[1,3,640,640]);
+      const outputs=await session.run({[inputName]:tensor});
+      const output=outputs[outputName],values=output.data;
+      let best=null;
+      const rows=output.dims?.[1]||0;
+      for(let i=0;i<rows;i++){
+        const j=i*6,score=values[j+4],classId=Math.round(values[j+5]);
+        if(classId!==0||!Number.isFinite(score)||score<.15)continue;
+        const x1=values[j],y1=values[j+1],x2=values[j+2],y2=values[j+3];
+        if(!Number.isFinite(x1+y1+x2+y2))continue;
+        const x=Math.max(0,Math.min(canvas.width,(x1-offsetX)/scale));
+        const y=Math.max(0,Math.min(canvas.height,(y1-offsetY)/scale));
+        const right=Math.max(0,Math.min(canvas.width,(x2-offsetX)/scale));
+        const bottom=Math.max(0,Math.min(canvas.height,(y2-offsetY)/scale));
+        if(right<=x||bottom<=y)continue;
+        const candidate={x:x/canvas.width,y:y/canvas.height,w:(right-x)/canvas.width,h:(bottom-y)/canvas.height,score};
+        if(!best||score>best.score)best=candidate;
+      }
+      tensor.dispose?.();output?.dispose?.();
+      return best;
+    },
+    async close(){await session.release();}
+  };
+}
+async function detectRacket(detector,canvas){
+  return detector?await detector.detect(canvas):null;
 }
 function angle3(a,b,c){const ab=[a.x-b.x,a.y-b.y],cb=[c.x-b.x,c.y-b.y];const dot=ab[0]*cb[0]+ab[1]*cb[1],mag=Math.hypot(...ab)*Math.hypot(...cb);if(!mag)return null;return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI)}
 const POSE_LINKS=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28]];
@@ -171,7 +218,7 @@ async function startForehandAnalysis(videoId){
       status.textContent='Vorhand wird untersucht: Bild '+(i+1)+' von '+times.length+' …';
       const seeked=waitEvent(videoEl,'seeked');videoEl.currentTime=times[i];await seeked;
       const scale=Math.min(1,640/(videoEl.videoWidth||640));canvas.width=Math.round((videoEl.videoWidth||640)*scale);canvas.height=Math.round((videoEl.videoHeight||360)*scale);ctx.drawImage(videoEl,0,0,canvas.width,canvas.height);
-      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];const racket=racketTask?detectRacket(racketTask,canvas):null;if(racket)racketSamples++;if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null,racket};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
+      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];const racket=racketTask?await detectRacket(racketTask,canvas):null;if(racket)racketSamples++;if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null,racket};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
       const visible=lm.filter(p=>(p.visibility??1)>.4).length;
       const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:lm.map(p=>({x:p.x,y:p.y,visibility:p.visibility??1})),racket};
       const torsoLeft=Math.max(.05,Math.hypot(lm[11].x-lm[23].x,lm[11].y-lm[23].y));
@@ -195,7 +242,7 @@ async function startForehandAnalysis(videoId){
     status.textContent='Analyse abgeschlossen · '+detected+' von '+times.length+' Bildern mit erkennbarer Körperpose. Ergebnis lokal gespeichert.';
     renderAnalysisResult(result,item);
   }catch(e){status.textContent='Analyse nicht möglich: '+(e.message||'Unbekannter Fehler')+'. Bitte ein gut beleuchtetes Video mit vollständig sichtbarem Körper verwenden.'}
-  finally{if(task){try{task.close()}catch(e){console.warn('PoseLandmarker konnte nicht geschlossen werden:',e)}}if(racketTask){try{racketTask.close()}catch(e){console.warn('ObjectDetector konnte nicht geschlossen werden:',e)}}if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
+  finally{if(task){try{task.close()}catch(e){console.warn('PoseLandmarker konnte nicht geschlossen werden:',e)}}if(racketTask){try{await racketTask.close()}catch(e){console.warn('Tennis-Schläger-Modell konnte nicht geschlossen werden:',e)}}if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
 }
 
 function angleChart(frames,keys,title){

@@ -1,0 +1,74 @@
+name: Export tennis-specific racket model
+
+on:
+  push:
+    branches:
+      - feature/courtside-model-export
+    paths:
+      - ".github/workflows/export-courtside-model.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/courtside-model-export
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install export tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ultralytics onnx onnxslim
+
+      - name: Download the tennis-specific model
+        run: |
+          mkdir -p models
+          curl --fail --location --retry 3 \
+            "https://huggingface.co/Davidsv/CourtSide-Computer-Vision-v1/resolve/main/model.pt" \
+            --output /tmp/courtside-model.pt
+          test "$(stat -c%s /tmp/courtside-model.pt)" -gt 1000000
+          echo "be98152dc5ddcf5552d2b71ae6480d2c6bcf360a1f2369e21b4dc66da442dfcb  /tmp/courtside-model.pt" | sha256sum --check -
+
+      - name: Export to browser-compatible ONNX
+        run: |
+          python - <<'PY'
+          from ultralytics import YOLO
+          import onnx
+          model = YOLO("/tmp/courtside-model.pt")
+          output = model.export(
+              format="onnx",
+              imgsz=640,
+              opset=17,
+              simplify=True,
+              nms=True,
+              conf=0.10,
+              iou=0.45,
+              dynamic=False,
+              batch=1,
+          )
+          graph = onnx.load(output)
+          onnx.checker.check_model(graph)
+          print("Validated ONNX model:", output)
+          print("Inputs:", [(x.name, [d.dim_value for d in x.type.tensor_type.shape.dim]) for x in graph.graph.input])
+          print("Outputs:", [(x.name, [d.dim_value for d in x.type.tensor_type.shape.dim]) for x in graph.graph.output])
+          PY
+          cp /tmp/courtside-model.onnx models/courtside-yolov11n.onnx
+
+      - name: Commit the converted model to this branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add models/courtside-yolov11n.onnx
+          git commit -m "Add browser-ready tennis racket detection model"
+          git push origin HEAD:feature/courtside-model-export

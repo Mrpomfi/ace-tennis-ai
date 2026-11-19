@@ -1,0 +1,45 @@
+name: Vendor ONNX Runtime Web locally
+
+on:
+  push:
+    branches:
+      - feature/courtside-model-export
+    paths:
+      - ".github/workflows/vendor-onnx-runtime.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  vendor-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/courtside-model-export
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install ONNX Runtime Web
+        run: |
+          npm install --no-save --no-package-lock onnxruntime-web@1.20.1
+          mkdir -p vendor/onnxruntime-web
+          rm -f vendor/onnxruntime-web/ort.min.js
+          cp node_modules/onnxruntime-web/dist/ort.wasm.min.js vendor/onnxruntime-web/
+          cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm vendor/onnxruntime-web/
+          cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs vendor/onnxruntime-web/
+          test -s vendor/onnxruntime-web/ort.wasm.min.js
+          test -s vendor/onnxruntime-web/ort-wasm-simd-threaded.wasm
+
+      - name: Commit the local browser runtime
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vendor/onnxruntime-web
+          git commit -m "Vendor ONNX Runtime Web for offline racket detection"
+          git push origin HEAD:feature/courtside-model-export
