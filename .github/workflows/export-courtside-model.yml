@@ -38,6 +38,7 @@ jobs:
             "https://huggingface.co/Davidsv/CourtSide-Computer-Vision-v1/resolve/main/model.pt" \
             --output /tmp/courtside-model.pt
           test "$(stat -c%s /tmp/courtside-model.pt)" -gt 1000000
+          echo "be98152dc5ddcf5552d2b71ae6480d2c6bcf360a1f2369e21b4dc66da442dfcb  /tmp/courtside-model.pt" | sha256sum --check -
 
       - name: Export to browser-compatible ONNX
         run: |
@@ -51,6 +52,8 @@ jobs:
               opset=17,
               simplify=True,
               nms=True,
+              conf=0.10,
+              iou=0.45,
               dynamic=False,
               batch=1,
           )
