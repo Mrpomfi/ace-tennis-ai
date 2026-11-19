@@ -186,9 +186,22 @@ async function detectRacket(detector,canvas,landmarks){
   if(!detector)return {box:null,candidates:[],diagnostic:{error:'Modell nicht geladen'}};
   if(!landmarks)return {box:null,candidates:[],diagnostic:{error:'Körperpose nicht erkannt'}};
   const width=canvas.width,height=canvas.height;
+  const fullFrame=await detector.detect(canvas);
+  const fullCandidates=(fullFrame.candidates||[]).map(candidate=>({...candidate,source:'Ganzbild'}));
+  const fullDiagnostic={...(fullFrame.diagnostic||{}),source:'Ganzbild'};
+  const fullSelection=selectRacketCandidate(fullCandidates,landmarks,fullDiagnostic);
+  if(fullSelection){
+    return {box:fullSelection,candidates:fullCandidates,diagnostic:{
+      ...fullDiagnostic,inferenceModes:['Ganzbild'],cropInferenceCount:0,
+      cropSides:[],errors:fullDiagnostic.error?[fullDiagnostic.error]:[]
+    }};
+  }
   const point=i=>landmarks[i]&&(landmarks[i].visibility??1)>.4?landmarks[i]:null;
   const torsoPoints=[point(11),point(12),point(23),point(24)].filter(Boolean);
-  if(torsoPoints.length<4)return {box:null,candidates:[],diagnostic:{error:'Rumpf für Schläger-Suchfenster nicht sicher erkannt'}};
+  if(torsoPoints.length<4)return {box:null,candidates:fullCandidates,diagnostic:{
+    ...fullDiagnostic,inferenceModes:['Ganzbild'],cropInferenceCount:0,cropSides:[],
+    errors:['Rumpf für Schläger-Suchfenster nicht sicher erkannt']
+  }};
   const shoulder={x:(landmarks[11].x+landmarks[12].x)*.5*width,y:(landmarks[11].y+landmarks[12].y)*.5*height};
   const hip={x:(landmarks[23].x+landmarks[24].x)*.5*width,y:(landmarks[23].y+landmarks[24].y)*.5*height};
   const torso=Math.max(24,Math.hypot(shoulder.x-hip.x,shoulder.y-hip.y));
@@ -198,15 +211,18 @@ async function detectRacket(detector,canvas,landmarks){
     const ex=elbow.x*width,ey=elbow.y*height,wx=wrist.x*width,wy=wrist.y*height;
     const dx=wx-ex,dy=wy-ey,length=Math.hypot(dx,dy);
     if(length<4)return null;
-    // The racket normally continues outwards from the forearm beyond the wrist.
-    const sideLength=torso*2.5,cx=wx+dx/length*torso*.32,cy=wy+dy/length*torso*.32;
+    // Include more of the racket head beyond the wrist, not just the hand.
+    const sideLength=torso*3.2,cx=wx+dx/length*torso*.5,cy=wy+dy/length*torso*.5;
     const sx=Math.max(0,Math.min(width-sideLength,cx-sideLength/2));
     const sy=Math.max(0,Math.min(height-sideLength,cy-sideLength/2));
     const sw=Math.max(1,Math.min(sideLength,width-sx)),sh=Math.max(1,Math.min(sideLength,height-sy));
     return {side,sx,sy,sw,sh};
   }).filter(Boolean);
-  if(!arms.length)return {box:null,candidates:[],diagnostic:{error:'Keine sichere Hand-/Unterarmposition für die lokale Suche'}};
-  const candidates=[],diagnostics=[];
+  if(!arms.length)return {box:null,candidates:fullCandidates,diagnostic:{
+    ...fullDiagnostic,inferenceModes:['Ganzbild'],cropInferenceCount:0,cropSides:[],
+    errors:['Keine sichere Hand-/Unterarmposition für die lokale Suche']
+  }};
+  const candidates=[...fullCandidates],diagnostics=[fullDiagnostic];
   for(const region of arms){
     const crop=document.createElement('canvas');
     crop.width=Math.max(1,Math.round(region.sw));crop.height=Math.max(1,Math.round(region.sh));
@@ -221,7 +237,7 @@ async function detectRacket(detector,canvas,landmarks){
         y:(region.sy+candidate.y*region.sh)/height,
         w:candidate.w*region.sw/width,
         h:candidate.h*region.sh/height,
-        cropSide:region.side
+        cropSide:region.side,source:'Arm-Ausschnitt'
       });
     }
   }
@@ -234,12 +250,13 @@ async function detectRacket(detector,canvas,landmarks){
     validRows:diagnostics.reduce((n,d)=>n+(d.validRows||0),0),
     paddedRows:diagnostics.reduce((n,d)=>n+(d.paddedRows||0),0),
     classCounts:diagnostics.reduce((acc,d)=>{for(const [k,v] of Object.entries(d.classCounts||{}))acc[k]=(acc[k]||0)+v;return acc;},{}),
-    topRows:diagnostics.flatMap(d=>(d.topRows||[]).map(row=>({...row,cropSide:d.cropSide}))).sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,5),
+    topRows:diagnostics.flatMap(d=>(d.topRows||[]).map(row=>({...row,cropSide:d.cropSide||null,source:d.source||'Arm-Ausschnitt'}))).sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,5),
     above01:diagnostics.reduce((n,d)=>n+(d.above01||0),0),
     above05:diagnostics.reduce((n,d)=>n+(d.above05||0),0),
     above15:diagnostics.reduce((n,d)=>n+(d.above15||0),0),
-    cropInferenceCount:diagnostics.length,
-    cropSides:diagnostics.map(d=>d.cropSide),
+    inferenceModes:['Ganzbild',...arms.map(a=>'Arm-'+a.side)],
+    cropInferenceCount:arms.length,
+    cropSides:arms.map(d=>d.side),
     errors:diagnostics.filter(d=>d.error).map(d=>d.error)
   };
   const best=candidates.reduce((chosen,candidate)=>!chosen||candidate.score>chosen.score?candidate:chosen,null);
