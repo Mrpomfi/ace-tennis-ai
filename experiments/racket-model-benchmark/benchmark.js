@@ -154,8 +154,8 @@ async function runTest(){
  }catch(e){
   console.error('ACE Benchmark Fehler in Phase:',stage,e);
   const detail=String(e?.message||e||'Unbekannter Fehler');
-  const stack=e?.stack?String(e.stack).split('\\n').slice(0,5).join('\\n'):'';
-  say('Testfehler in Phase: '+stage+'\\n'+detail+(stack?'\\n'+stack:'')+'\\nBitte Screenshot dieser Meldung senden.');
+  const stack=e?.stack?String(e.stack).split('\n').slice(0,5).join('\n'):'';
+  say('Testfehler in Phase: '+stage+'\n'+detail+(stack?'\n'+stack:'')+'\nBitte Screenshot dieser Meldung senden.');
  }
  finally{textFeatures?.dispose?.();base?.release?.();world?.release?.();busy=false;run.disabled=false;}
 }
