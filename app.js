@@ -441,7 +441,7 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
     }
     return best;
   };
-  let selected=null,bestRank=-Infinity,bestNearHand=Infinity,bestNearArm=Infinity,nearestCandidate=null,checked=0,nearHand=0,nearArm=0;
+  let selected=null,bestRank=-Infinity,bestNearHand=Infinity,bestNearArm=Infinity,nearestCandidate=null,nearestDistance=Infinity,checked=0,nearHand=0,nearArm=0;
   for(const candidate of candidates){
     checked++;
     const l=candidate.x,t=candidate.y,r=l+candidate.w,b=t+candidate.h;
@@ -453,7 +453,7 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
       if(wd+ad<wristDistance+armDistance){wristDistance=wd;armDistance=ad;}
     }
     const wristRatio=wristDistance/torso,armRatio=armDistance/torso;
-    if(wristRatio+armRatio<bestNearHand+bestNearArm){nearestCandidate={x:Number(l.toFixed(4)),y:Number(t.toFixed(4)),w:Number(candidate.w.toFixed(4)),h:Number(candidate.h.toFixed(4)),score:Number(candidate.score.toFixed(4)),handDistance:Number(wristRatio.toFixed(3)),armDistance:Number(armRatio.toFixed(3))};}bestNearHand=Math.min(bestNearHand,wristRatio);bestNearArm=Math.min(bestNearArm,armRatio);
+    if(wristRatio+armRatio<nearestDistance){nearestDistance=wristRatio+armRatio;nearestCandidate={x:Number(l.toFixed(4)),y:Number(t.toFixed(4)),w:Number(candidate.w.toFixed(4)),h:Number(candidate.h.toFixed(4)),score:Number(candidate.score.toFixed(4)),handDistance:Number(wristRatio.toFixed(3)),armDistance:Number(armRatio.toFixed(3))};}bestNearHand=Math.min(bestNearHand,wristRatio);bestNearArm=Math.min(bestNearArm,armRatio);
     if(wristRatio<=.48)nearHand++;
     if(armRatio<=.30)nearArm++;
     // A racket is long: its centre/head may be far from the wrist. Test the
