@@ -88,9 +88,11 @@ async function loadOrt(){
  ort.env.wasm.numThreads=1;
 }
 async function createClipFeatures(){
- say('CLIP-Textencoder wird geladen. Das kann beim ersten Mal etwas dauern …');
+ say('CLIP: Tokenizer wird geladen …');
  const tokenizer=await AutoTokenizer.from_pretrained(CLIP_MODEL);
+ say('CLIP: Textmodell wird geladen …');
  const model=await CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL,{dtype:'q8'});
+ say('CLIP: Textmerkmale werden berechnet …');
  const prompts=['a photo of a tennis racket','a close-up photo of a tennis racquet'];
  const tokens=tokenizer(prompts,{padding:true,truncation:true});
  const result=await model(tokens);
@@ -100,15 +102,19 @@ async function createClipFeatures(){
 }
 async function runTest(){
  if(busy)return;busy=true;run.disabled=true;progress.value=0;$('frames').innerHTML='';
- let base=null,world=null,textFeatures=null;
+ let base=null,world=null,textFeatures=null,stage='Video-Frames vorbereiten';
  try{
+  stage='Video-Frames auslesen';
   say('Video-Frames werden vorbereitet …');frames=await extractFrames(24);
-  await loadOrt();
+  stage='ONNX Runtime initialisieren';
+  say('ONNX Runtime wird vorbereitet …');await loadOrt();
   const threshold=Number($('threshold').value),baseTimes=[],worldTimes=[],baseResults=[];
   let baseTotal=0,worldTotal=0;
+  stage='CourtSide-Modell laden';
   say('CourtSide-Modell wird geladen …');
   const baseBytes=await (await fetch(BASE)).arrayBuffer();
   base=await ort.InferenceSession.create(baseBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
+  stage='CourtSide-Inferenz';
   for(let i=0;i<frames.length;i++){
    const f=frames[i],meta=makeInput(f.canvas),t0=performance.now();
    if(base.inputNames.length!==1)throw Error('CourtSide erwartet einen einzelnen Bildeingang; gefunden: '+base.inputNames.join(', '));
@@ -120,6 +126,7 @@ async function runTest(){
    await wait(0);
   }
   base.release?.();base=null;
+  stage='YOLO-World-Modell laden';
   say('CourtSide abgeschlossen. YOLO-World wird geladen …');
   const worldBytes=await (await fetch(WORLD)).arrayBuffer();
   world=await ort.InferenceSession.create(worldBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
@@ -127,8 +134,10 @@ async function runTest(){
   const missing=requiredInputs.filter(name=>!world.inputNames.includes(name));
   if(missing.length)throw Error('YOLO-World-Eingänge fehlen: '+missing.join(', ')+'. Gefunden: '+world.inputNames.join(', '));
   if(world.outputNames.length!==1)throw Error('Unerwartete YOLO-World-Ausgaben: '+world.outputNames.join(', '));
+  stage='CLIP-Textencoder laden und ausführen';
   textFeatures=await createClipFeatures();
   if(textFeatures.dims[1]!==2||textFeatures.dims[2]!==512)throw Error('CLIP-Textmerkmale haben eine unerwartete Form: '+textFeatures.dims.join('×'));
+  stage='YOLO-World-Inferenz';
   for(let i=0;i<frames.length;i++){
    const f=frames[i],meta=makeInput(f.canvas),t0=performance.now();
    const out=await world.run({images:meta.tensor,txt_feats:textFeatures});
@@ -142,7 +151,12 @@ async function runTest(){
   $('baseTime').textContent=(baseTimes.reduce((a,b)=>a+b,0)/baseTimes.length).toFixed(0)+' ms';
   $('worldTime').textContent=(worldTimes.reduce((a,b)=>a+b,0)/worldTimes.length).toFixed(0)+' ms';
   say('Vergleich abgeschlossen. Bitte prüfe die Bildüberlagerungen: Blau = CourtSide, Orange = YOLO-World. Die Trefferzahl allein sagt noch nicht, welches Modell den echten Schläger gefunden hat.');
- }catch(e){console.error(e);say('Test konnte nicht abgeschlossen werden: '+(e?.message||e)+'\\nBitte Screenshot dieser Meldung senden.');}
+ }catch(e){
+  console.error('ACE Benchmark Fehler in Phase:',stage,e);
+  const detail=String(e?.message||e||'Unbekannter Fehler');
+  const stack=e?.stack?String(e.stack).split('\\n').slice(0,5).join('\\n'):'';
+  say('Testfehler in Phase: '+stage+'\\n'+detail+(stack?'\\n'+stack:'')+'\\nBitte Screenshot dieser Meldung senden.');
+ }
  finally{textFeatures?.dispose?.();base?.release?.();world?.release?.();busy=false;run.disabled=false;}
 }
 function drawFrame(f,a,b,i){
