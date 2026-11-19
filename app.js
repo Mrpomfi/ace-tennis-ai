@@ -626,7 +626,7 @@ function drawPlaybackPose(canvas,pose,color,racket,candidates=[]){
     for(const [a,b] of POSE_LINKS){const p=pose[a],q=pose[b];if(!p||!q||p.visibility<.35||q.visibility<.35)continue;ctx.moveTo(p.x*w,p.y*h);ctx.lineTo(q.x*w,q.y*h);}ctx.stroke();
     for(const p of pose){if(!p||p.visibility<.35)continue;ctx.beginPath();ctx.arc(p.x*w,p.y*h,Math.max(2,w/150),0,Math.PI*2);ctx.fill();}
   }
-  for(const candidate of (candidates||[]).slice(0,8)){
+  for(const candidate of (candidates||[]).slice().sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,8)){
     const x=candidate.x*w,y=candidate.y*h,bw=candidate.w*w,bh=candidate.h*h;
     ctx.save();ctx.strokeStyle='#ffd54a';ctx.lineWidth=Math.max(2,w/260);ctx.setLineDash([Math.max(4,w/120),Math.max(3,w/180)]);
     ctx.strokeRect(x,y,bw,bh);ctx.setLineDash([]);ctx.font='bold '+Math.max(11,w/48)+'px sans-serif';
