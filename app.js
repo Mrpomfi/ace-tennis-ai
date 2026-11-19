@@ -203,13 +203,9 @@ async function detectRacket(detector,canvas,landmarks){
   const fullCandidates=(fullFrame.candidates||[]).map(candidate=>({...candidate,source:'Ganzbild'}));
   const fullDebugCandidates=(fullFrame.debugCandidates||fullFrame.candidates||[]).map(candidate=>({...candidate,source:'Ganzbild'}));
   const fullDiagnostic={...(fullFrame.diagnostic||{}),source:'Ganzbild'};
+  // Keep the full-frame result, but do not stop here: hand/forearm crops
+  // can reveal a small or motion-blurred racket that the full-frame pass misses.
   const fullSelection=selectRacketCandidate(fullCandidates,landmarks,fullDiagnostic);
-  if(fullSelection){
-    return {box:fullSelection,candidates:fullCandidates,debugCandidates:fullDebugCandidates,diagnostic:{
-      ...fullDiagnostic,inferenceModes:['Ganzbild'],cropInferenceCount:0,
-      cropSides:[],errors:fullDiagnostic.error?[fullDiagnostic.error]:[]
-    }};
-  }
   const point=i=>landmarks[i]&&(landmarks[i].visibility??1)>.4?landmarks[i]:null;
   const torsoPoints=[point(11),point(12),point(23),point(24)].filter(Boolean);
   if(torsoPoints.length<4)return {box:null,candidates:fullCandidates,debugCandidates:fullDebugCandidates,diagnostic:{
@@ -273,6 +269,7 @@ async function detectRacket(detector,canvas,landmarks){
     }
   }
   const diagnostic={
+    fullFrameSelection:!!fullSelection,
     outputShape:diagnostics.find(d=>d.outputShape)?.outputShape||'—',
     format:diagnostics.find(d=>d.format)?.format||'—',
     maxRacketScore:Math.max(0,...diagnostics.map(d=>d.maxRacketScore||0)),
