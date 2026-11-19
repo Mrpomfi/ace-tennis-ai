@@ -27,11 +27,34 @@ let analysisBusy=false,analysisPlaybackUrl=null,playbackFrame=null;
 const MP_MODEL='./vendor/mediapipe/pose_landmarker_lite.task';
 async function getPoseTask(){
   setStatus('analysisStatus','Bewegungsmodell wird vorbereitet …');
-  const {FilesetResolver,PoseLandmarker}=await import('./vendor/mediapipe/vision_bundle.mjs');
+  const {FilesetResolver,PoseLandmarker,ObjectDetector}=await import('./vendor/mediapipe/vision_bundle.mjs');
   const vision=await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');
   // Jede Videoanalyse erhält eine frische Instanz. So kann der VIDEO-Tracker
   // keine Landmarken aus einer vorherigen Aufnahme in das nächste Video tragen.
   return await PoseLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:MP_MODEL,delegate:'GPU'},runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:.45,minPosePresenceConfidence:.45,minTrackingConfidence:.45});
+}
+const RACKET_MODEL_URL='https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite';
+async function getRacketTask(vision){
+  setStatus('analysisStatus','Schläger-Erkennungsmodell wird geladen (beim ersten Mal mit Internetverbindung) …');
+  const cache=await caches.open('ace-tennis-racket-model-v1');
+  let response=await cache.match(RACKET_MODEL_URL);
+  if(!response){
+    response=await fetch(RACKET_MODEL_URL,{mode:'cors'});
+    if(!response.ok)throw Error('Schläger-Modell konnte nicht geladen werden ('+response.status+').');
+    await cache.put(RACKET_MODEL_URL,response.clone());
+  }
+  const bytes=new Uint8Array(await response.arrayBuffer());
+  const detector=await ObjectDetector.createFromModelBuffer(vision,bytes);
+  await detector.setOptions({runningMode:'IMAGE',scoreThreshold:.18,maxResults:8});
+  return detector;
+}
+function detectRacket(detector,canvas){
+  if(!detector)return null;
+  const detections=detector.detect(canvas).detections||[];
+  const matches=detections.flatMap(d=>(d.categories||[]).filter(c=>(c.categoryName||'').toLowerCase()==='tennis racket').map(c=>({score:c.score,box:d.boundingBox}))).filter(x=>x.box&&x.score>=.18).sort((a,b)=>b.score-a.score);
+  if(!matches.length)return null;
+  const best=matches[0],b=best.box;
+  return {x:b.originX/canvas.width,y:b.originY/canvas.height,w:b.width/canvas.width,h:b.height/canvas.height,score:best.score};
 }
 function angle3(a,b,c){const ab=[a.x-b.x,a.y-b.y],cb=[c.x-b.x,c.y-b.y];const dot=ab[0]*cb[0]+ab[1]*cb[1],mag=Math.hypot(...ab)*Math.hypot(...cb);if(!mag)return null;return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI)}
 const POSE_LINKS=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28]];
@@ -124,7 +147,7 @@ function detectStrokePhases(frames){
 }
 async function startForehandAnalysis(videoId){
   if(analysisBusy)return;analysisBusy=true;const status=$('analysisStatus'),out=$('analysisResult');clearSkeletonPlayback();out.innerHTML='';
-  let videoEl,objectUrl,task;
+  let videoEl,objectUrl,task,racketTask,vision;
   try{
     const item=await get('videos',videoId);if(!item)throw Error('Video nicht gefunden');
     if(item.shot!=='Vorhand')throw Error('Bitte ein Vorhandvideo auswählen.');
@@ -133,17 +156,18 @@ async function startForehandAnalysis(videoId){
     await new Promise((resolve,reject)=>{videoEl.onloadedmetadata=resolve;videoEl.onerror=()=>reject(Error('Videoformat kann nicht gelesen werden.'));});
     if(!Number.isFinite(videoEl.duration)||videoEl.duration<=0)throw Error('Videolänge konnte nicht ermittelt werden.');
     task=await getPoseTask();
+    try{const visionFiles=await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');racketTask=await getRacketTask(visionFiles);}catch(racketError){console.warn('Schläger-Erkennung nicht verfügbar:',racketError);status.textContent='Schläger-Modell nicht verfügbar – Körperanalyse läuft weiter …';}
     const duration=videoEl.duration,count=Math.min(96,Math.max(24,Math.ceil(duration*12)));
     const times=Array.from({length:count},(_,i)=>Math.min(Math.max(0.05,duration-0.05),0.05+(Math.max(0,duration-0.1)*i/Math.max(1,count-1))));
     const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
-    const frames=[],elbowL=[],elbowR=[],kneeL=[],kneeR=[],phaseFrames=[[],[],[]];let detected=0,preview=null;
+    const frames=[],elbowL=[],elbowR=[],kneeL=[],kneeR=[],phaseFrames=[[],[],[]];let detected=0,preview=null,racketSamples=0;
     for(let i=0;i<times.length;i++){
       status.textContent='Vorhand wird untersucht: Bild '+(i+1)+' von '+times.length+' …';
       const seeked=waitEvent(videoEl,'seeked');videoEl.currentTime=times[i];await seeked;
       const scale=Math.min(1,640/(videoEl.videoWidth||640));canvas.width=Math.round((videoEl.videoWidth||640)*scale);canvas.height=Math.round((videoEl.videoHeight||360)*scale);ctx.drawImage(videoEl,0,0,canvas.width,canvas.height);
-      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
+      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];const racket=(racketTask&&i%2===0)?detectRacket(racketTask,canvas):null;if(racket)racketSamples++;if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null,racket};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
       const visible=lm.filter(p=>(p.visibility??1)>.4).length;
-      const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:lm.map(p=>({x:p.x,y:p.y,visibility:p.visibility??1}))};
+      const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:lm.map(p=>({x:p.x,y:p.y,visibility:p.visibility??1})),racket};
       const torsoLeft=Math.max(.05,Math.hypot(lm[11].x-lm[23].x,lm[11].y-lm[23].y));
       const torsoRight=Math.max(.05,Math.hypot(lm[12].x-lm[24].x,lm[12].y-lm[24].y));
       if([lm[11],lm[15],lm[23]].every(p=>(p.visibility??1)>.4))frame.leftArmPoint={x:(lm[15].x-lm[11].x)/torsoLeft,y:(lm[15].y-lm[11].y)/torsoLeft};
@@ -160,12 +184,12 @@ async function startForehandAnalysis(videoId){
     const coverage=Math.round(detected/Math.max(1,times.length)*100);
     const phases=phaseFrames.map((group,i)=>({name:['Anfang','Mitte','Ende'][i],leftElbow:seriesStats(group.map(x=>x.leftElbow).filter(Number.isFinite)),rightElbow:seriesStats(group.map(x=>x.rightElbow).filter(Number.isFinite)),leftKnee:seriesStats(group.map(x=>x.leftKnee).filter(Number.isFinite)),rightKnee:seriesStats(group.map(x=>x.rightKnee).filter(Number.isFinite))}));
     const strokePhases=detectStrokePhases(frames);
-    const result={videoId,created:Date.now(),angle:item.angle||'unknown',sampled:times.length,detected,coverage,strokePhases,elbowAverage:seriesStats([...elbowL,...elbowR])?.avg??null,kneeAverage:seriesStats([...kneeL,...kneeR])?.avg??null,elbowLeft:seriesStats(elbowL),elbowRight:seriesStats(elbowR),kneeLeft:seriesStats(kneeL),kneeRight:seriesStats(kneeR),phases,preview,frames};
+    const result={videoId,created:Date.now(),angle:item.angle||'unknown',sampled:times.length,detected,coverage,racketSamples,strokePhases,elbowAverage:seriesStats([...elbowL,...elbowR])?.avg??null,kneeAverage:seriesStats([...kneeL,...kneeR])?.avg??null,elbowLeft:seriesStats(elbowL),elbowRight:seriesStats(elbowR),kneeLeft:seriesStats(kneeL),kneeRight:seriesStats(kneeR),phases,preview,frames};
     await add('analyses',result);
     status.textContent='Analyse abgeschlossen · '+detected+' von '+times.length+' Bildern mit erkennbarer Körperpose. Ergebnis lokal gespeichert.';
     renderAnalysisResult(result,item);
   }catch(e){status.textContent='Analyse nicht möglich: '+(e.message||'Unbekannter Fehler')+'. Bitte ein gut beleuchtetes Video mit vollständig sichtbarem Körper verwenden.'}
-  finally{if(task){try{task.close()}catch(e){console.warn('PoseLandmarker konnte nicht geschlossen werden:',e)}}if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
+  finally{if(task){try{task.close()}catch(e){console.warn('PoseLandmarker konnte nicht geschlossen werden:',e)}}if(racketTask){try{racketTask.close()}catch(e){console.warn('ObjectDetector konnte nicht geschlossen werden:',e)}}if(objectUrl)URL.revokeObjectURL(objectUrl);analysisBusy=false}
 }
 
 function angleChart(frames,keys,title){
@@ -258,11 +282,23 @@ function poseAtTime(frames,time){
   }
   const nearest=before||after;return nearest&&Math.abs(nearest.time-time)<=.22?nearest.pose:null;
 }
-function drawPlaybackPose(canvas,pose,color){
-  const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);if(!pose)return;
-  ctx.lineWidth=Math.max(3,w/180);ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=color;ctx.fillStyle='#fff';ctx.beginPath();
-  for(const [a,b] of POSE_LINKS){const p=pose[a],q=pose[b];if(!p||!q||p.visibility<.35||q.visibility<.35)continue;ctx.moveTo(p.x*w,p.y*h);ctx.lineTo(q.x*w,q.y*h);}ctx.stroke();
-  for(const p of pose){if(!p||p.visibility<.35)continue;ctx.beginPath();ctx.arc(p.x*w,p.y*h,Math.max(2,w/150),0,Math.PI*2);ctx.fill();}
+function racketAtTime(frames,time){
+  let nearest=null,distance=Infinity;
+  for(const frame of frames||[]){if(!frame.racket)continue;const d=Math.abs(frame.time-time);if(d<distance){nearest=frame.racket;distance=d;}}
+  return distance<=.28?nearest:null;
+}
+function drawPlaybackPose(canvas,pose,color,racket){
+  const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);
+  if(pose){
+    ctx.lineWidth=Math.max(3,w/180);ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=color;ctx.fillStyle='#fff';ctx.beginPath();
+    for(const [a,b] of POSE_LINKS){const p=pose[a],q=pose[b];if(!p||!q||p.visibility<.35||q.visibility<.35)continue;ctx.moveTo(p.x*w,p.y*h);ctx.lineTo(q.x*w,q.y*h);}ctx.stroke();
+    for(const p of pose){if(!p||p.visibility<.35)continue;ctx.beginPath();ctx.arc(p.x*w,p.y*h,Math.max(2,w/150),0,Math.PI*2);ctx.fill();}
+  }
+  if(racket){
+    const x=racket.x*w,y=racket.y*h,bw=racket.w*w,bh=racket.h*h;
+    ctx.save();ctx.strokeStyle='#ff4d4d';ctx.lineWidth=Math.max(3,w/220);ctx.setLineDash([Math.max(5,w/100),Math.max(3,w/160)]);ctx.strokeRect(x,y,bw,bh);ctx.setLineDash([]);
+    ctx.fillStyle='#ff4d4d';ctx.font='bold '+Math.max(12,w/42)+'px sans-serif';ctx.fillText('Schläger '+Math.round(racket.score*100)+'%',x,Math.max(16,y-6));ctx.restore();
+  }
 }
 function setupSkeletonPlayback(r,v){
   const player=$('skeletonPlayer'),stage=$('skeletonStage'),video=$('skeletonVideo'),canvas=$('skeletonCanvas'),label=$('skeletonPhaseLabel');
@@ -284,7 +320,7 @@ function setupSkeletonPlayback(r,v){
     if(!video.videoWidth||!video.videoHeight)return;
     const dpr=Math.min(2,window.devicePixelRatio||1);if(canvas.width!==Math.round(stage.clientWidth*dpr)||canvas.height!==Math.round(stage.clientHeight*dpr))resize();
     const t=video.currentTime,phase=phaseAtTime(t,r.strokePhases?.phases);
-    label.textContent=phase?.name||'Keine Phase zugeordnet';drawPlaybackPose(canvas,poseAtTime(r.frames,t),phaseColorAt(t,r.strokePhases?.phases));
+    label.textContent=phase?.name||'Keine Phase zugeordnet';drawPlaybackPose(canvas,poseAtTime(r.frames,t),phaseColorAt(t,r.strokePhases?.phases),racketAtTime(r.frames,t));
     if(video.duration>0){seek.value=String(Math.round(t/video.duration*1000));timeLabel.textContent=fmt(t)+' / '+fmt(video.duration);}playBtn.textContent=video.paused?'▶':'Ⅱ';
   };
   const animate=()=>{render();if(!video.paused&&!video.ended)playbackFrame=requestAnimationFrame(animate);else playbackFrame=null;};
@@ -309,10 +345,11 @@ function renderAnalysisResult(r,v){
   const phases=(r.phases||[]).map(p=>'<div class="phase"><b>'+p.name+'</b><small>Linker Ellenbogen: '+(p.leftElbow?.avg!=null?p.leftElbow.avg+'°':'—')+' · Rechter Ellenbogen: '+(p.rightElbow?.avg!=null?p.rightElbow.avg+'°':'—')+'</small><small>Linkes Knie: '+(p.leftKnee?.avg!=null?p.leftKnee.avg+'°':'—')+' · Rechtes Knie: '+(p.rightKnee?.avg!=null?p.rightKnee.avg+'°':'—')+'</small></div>').join('');
   const coverageText=r.coverage>=80?'Die Körperpose wurde in einem großen Teil der Stichproben erkannt.':r.coverage>=50?'Die Erkennung war wechselhaft. Einzelne Messwerte können fehlen.':'Die Erkennung war zu unsicher für eine verlässliche Bewegungsbeobachtung.';
   const stroke=r.strokePhases;
+  const racketMarkup=r.racketSamples?'<h3>Schläger-Erkennung (experimentell)</h3><p class="tiny">Der rote Rahmen zeigt erkannte Bereiche eines möglichen Tennisschlägers. Er wird nur bei ausreichend sicherer Erkennung eingeblendet. Er markiert noch nicht den exakten Schlägerkopf oder die Griffposition.</p><p><b>'+r.racketSamples+' Erkennungen</b> in den untersuchten Stichproben. Bitte prüfe die roten Markierungen im Video.</p>': '<h3>Schläger-Erkennung</h3><p class="tiny">In dieser Analyse wurde kein Schläger sicher erkannt. Bei älteren Analysen ist eine erneute Analyse nötig.</p>';
   const strokeMarkup=stroke?.phases?.length?'<div class="stroke-phase-list">'+stroke.phases.map(p=>'<div class="stroke-phase"><b>'+esc(p.name)+'</b><small>'+p.start.toFixed(2)+'–'+p.end.toFixed(2)+' s</small></div>').join('')+'</div>':'<p class="tiny">'+esc(stroke?.reason||'Keine zuverlässige Phasenschätzung möglich.')+'</p>';
   const sideLabel=stroke?.side==='left'?'die linke Seite (größere erkannte Handgelenkbewegung)':stroke?.side==='right'?'die rechte Seite (größere erkannte Handgelenkbewegung)':'keine Seite';
   const tips=[];if(r.coverage<80)tips.push('Filme bei gutem Licht und halte Kopf, Füße und beide Arme während des gesamten Schlages im Bild.');if(r.angle==='unknown')tips.push('Wähle beim nächsten Video die Kameraperspektive aus.');tips.push('Nutze möglichst dieselbe Kameraposition und denselben Abstand, wenn du Fortschritte vergleichen möchtest.');
-  $('analysisResult').innerHTML='<article class="entry"><div class="entry-top"><b>Vorhand · '+dateText(v.date)+'</b><span class="pill">'+r.coverage+'% Pose-Erkennung</span></div><small>Perspektive: '+angleLabel+' · '+r.detected+'/'+r.sampled+' analysierte Bilder</small>'+(r.frames?.some(f=>f.pose)?'<h3>Video mit animiertem Skelett</h3><p class="tiny">Das Skelett folgt den erkannten Gelenkpunkten. Die Zwischenpositionen werden zwischen den analysierten Bildern interpoliert.</p><div class="skeleton-player" id="skeletonPlayer"><div class="skeleton-stage" id="skeletonStage"><video id="skeletonVideo" playsinline preload="metadata"></video><canvas id="skeletonCanvas" aria-hidden="true"></canvas></div><div class="skeleton-controls"><button type="button" id="skeletonPlay" aria-label="Abspielen oder pausieren">▶</button><input id="skeletonSeek" type="range" min="0" max="1000" value="0" aria-label="Video-Position"><span id="skeletonTime">0:00</span><button type="button" id="skeletonExpand">⛶ Vollbild</button><button type="button" id="skeletonClose" hidden>Schließen</button></div><div class="skeleton-speed-row"><span class="skeleton-speed-label">Geschwindigkeit</span><div class="skeleton-speed-buttons" role="group" aria-label="Wiedergabegeschwindigkeit"><button type="button" data-speed="0.5" aria-pressed="false">0,5×</button><button type="button" data-speed="1" aria-pressed="true" class="active">1×</button></div></div></div><div id="skeletonPhaseLabel" class="skeleton-phase-label">Video wird vorbereitet …</div><div class="skeleton-legend"><span><i style="background:#55aaff"></i>Ausholen</span><span><i style="background:#ffad32"></i>Beschleunigung</span><span><i style="background:#ff4d4d"></i>Treffpunkt-Kandidat</span><span><i style="background:#45d483"></i>Ausschwung</span></div>':(r.preview?'<img alt="Erkanntes Körperskelett" src="'+r.preview+'" style="width:100%;border-radius:10px;margin-top:10px;background:#111">':'<p class="tiny">Für diese Analyse sind noch keine Gelenkpunkte gespeichert. Bitte das Video erneut analysieren.</p>'))+'<h3>Automatische Schlagphasen (experimentell)</h3><p class="tiny">Konservative Schätzung aus der Handgelenkbewegung relativ zur Schulter. „Ausholen“ wird nur bei einem erkennbaren maximalen Abstand vor der Beschleunigung angezeigt. Ausgewertet wird '+sideLabel+'. Der Treffpunkt ist nur ein Kandidaten-Zeitfenster, kein nachgewiesener Ballkontakt.</p>'+strokeMarkup+'<p class="tiny">'+(stroke?.status==='estimated'?'Bewegungsmuster ausreichend deutlich für eine erste Schätzung.':(stroke?.reason||'Die Phasenschätzung ist unsicher und sollte im Video überprüft werden.'))+'</p><h3>Winkelverlauf über die gesamte Aufnahme</h3><p class="tiny">Die Kurven zeigen die erkannten Winkel Bild für Bild. Lücken bedeuten, dass ein Gelenk in diesem Einzelbild nicht sicher erkannt wurde.</p>'+(r.frames?.length?angleChart(r.frames,[{key:'leftElbow',label:'Links',side:'left'},{key:'rightElbow',label:'Rechts',side:'right'}],'Ellenbogen'): '<p class="tiny">Keine Winkelmesswerte vorhanden.</p>')+(r.frames?.length?angleChart(r.frames,[{key:'leftKnee',label:'Links',side:'left'},{key:'rightKnee',label:'Rechts',side:'right'}],'Knie'):'')+'<h3>Bewegungsverlauf des Schlagarms</h3><p class="tiny">Diese Kurve zeigt, wann sich das erkannte Handgelenk besonders schnell bewegt. Sie hilft, die automatisch geschätzten Phasen zu überprüfen, beweist aber keinen Ballkontakt.</p>'+(stroke?.side&&r.frames?.length?wristSpeedChart(r.frames,stroke.side,stroke.phases):'<p class="tiny">Kein sicherer Schlagarm für einen Bewegungsverlauf erkannt.</p>')+'<h3>Anfang, Mitte und Ende</h3>'+(phases||'<p class="tiny">Zu wenige Messwerte für den Zeitverlauf.</p>')+'<h3>Winkelübersicht</h3>'+side('Ellenbogen links',r.elbowLeft)+side('Ellenbogen rechts',r.elbowRight)+side('Knie links',r.kneeLeft)+side('Knie rechts',r.kneeRight)+'<h3>Einordnung</h3><p>'+coverageText+'</p><h3>Für die nächste Aufnahme</h3><ul>'+tips.map(t=>'<li>'+esc(t)+'</li>').join('')+'</ul><p class="tiny">Noch nicht erkannt werden Schläger, Ball, Treffpunkt, Schlagrichtung oder 3D-Rotation. Deshalb gibt es bewusst keine Techniknote und keine Aussage, ob die Bewegung technisch richtig ist.</p></article>';
+  $('analysisResult').innerHTML='<article class="entry"><div class="entry-top"><b>Vorhand · '+dateText(v.date)+'</b><span class="pill">'+r.coverage+'% Pose-Erkennung</span></div><small>Perspektive: '+angleLabel+' · '+r.detected+'/'+r.sampled+' analysierte Bilder</small>'+(r.frames?.some(f=>f.pose)?'<h3>Video mit animiertem Skelett</h3><p class="tiny">Das Skelett folgt den erkannten Gelenkpunkten. Die Zwischenpositionen werden zwischen den analysierten Bildern interpoliert.</p><div class="skeleton-player" id="skeletonPlayer"><div class="skeleton-stage" id="skeletonStage"><video id="skeletonVideo" playsinline preload="metadata"></video><canvas id="skeletonCanvas" aria-hidden="true"></canvas></div><div class="skeleton-controls"><button type="button" id="skeletonPlay" aria-label="Abspielen oder pausieren">▶</button><input id="skeletonSeek" type="range" min="0" max="1000" value="0" aria-label="Video-Position"><span id="skeletonTime">0:00</span><button type="button" id="skeletonExpand">⛶ Vollbild</button><button type="button" id="skeletonClose" hidden>Schließen</button></div><div class="skeleton-speed-row"><span class="skeleton-speed-label">Geschwindigkeit</span><div class="skeleton-speed-buttons" role="group" aria-label="Wiedergabegeschwindigkeit"><button type="button" data-speed="0.5" aria-pressed="false">0,5×</button><button type="button" data-speed="1" aria-pressed="true" class="active">1×</button></div></div></div><div id="skeletonPhaseLabel" class="skeleton-phase-label">Video wird vorbereitet …</div><div class="skeleton-legend"><span><i style="background:#55aaff"></i>Ausholen</span><span><i style="background:#ffad32"></i>Beschleunigung</span><span><i style="background:#ff4d4d"></i>Treffpunkt-Kandidat</span><span><i style="background:#45d483"></i>Ausschwung</span></div>':(r.preview?'<img alt="Erkanntes Körperskelett" src="'+r.preview+'" style="width:100%;border-radius:10px;margin-top:10px;background:#111">':'<p class="tiny">Für diese Analyse sind noch keine Gelenkpunkte gespeichert. Bitte das Video erneut analysieren.</p>'))+'<h3>Automatische Schlagphasen (experimentell)</h3><p class="tiny">Konservative Schätzung aus der Handgelenkbewegung relativ zur Schulter. „Ausholen“ wird nur bei einem erkennbaren maximalen Abstand vor der Beschleunigung angezeigt. Ausgewertet wird '+sideLabel+'. Der Treffpunkt ist nur ein Kandidaten-Zeitfenster, kein nachgewiesener Ballkontakt.</p>'+racketMarkup+strokeMarkup+'<p class="tiny">'+(stroke?.status==='estimated'?'Bewegungsmuster ausreichend deutlich für eine erste Schätzung.':(stroke?.reason||'Die Phasenschätzung ist unsicher und sollte im Video überprüft werden.'))+'</p><h3>Winkelverlauf über die gesamte Aufnahme</h3><p class="tiny">Die Kurven zeigen die erkannten Winkel Bild für Bild. Lücken bedeuten, dass ein Gelenk in diesem Einzelbild nicht sicher erkannt wurde.</p>'+(r.frames?.length?angleChart(r.frames,[{key:'leftElbow',label:'Links',side:'left'},{key:'rightElbow',label:'Rechts',side:'right'}],'Ellenbogen'): '<p class="tiny">Keine Winkelmesswerte vorhanden.</p>')+(r.frames?.length?angleChart(r.frames,[{key:'leftKnee',label:'Links',side:'left'},{key:'rightKnee',label:'Rechts',side:'right'}],'Knie'):'')+'<h3>Bewegungsverlauf des Schlagarms</h3><p class="tiny">Diese Kurve zeigt, wann sich das erkannte Handgelenk besonders schnell bewegt. Sie hilft, die automatisch geschätzten Phasen zu überprüfen, beweist aber keinen Ballkontakt.</p>'+(stroke?.side&&r.frames?.length?wristSpeedChart(r.frames,stroke.side,stroke.phases):'<p class="tiny">Kein sicherer Schlagarm für einen Bewegungsverlauf erkannt.</p>')+'<h3>Anfang, Mitte und Ende</h3>'+(phases||'<p class="tiny">Zu wenige Messwerte für den Zeitverlauf.</p>')+'<h3>Winkelübersicht</h3>'+side('Ellenbogen links',r.elbowLeft)+side('Ellenbogen rechts',r.elbowRight)+side('Knie links',r.kneeLeft)+side('Knie rechts',r.kneeRight)+'<h3>Einordnung</h3><p>'+coverageText+'</p><h3>Für die nächste Aufnahme</h3><ul>'+tips.map(t=>'<li>'+esc(t)+'</li>').join('')+'</ul><p class="tiny">Die Schlägerbox ist noch keine genaue Schlägerkopf- oder Griffverfolgung. Ball, bestätigter Treffpunkt, Schlagrichtung und 3D-Rotation werden weiterhin nicht erkannt. Deshalb gibt es bewusst keine Techniknote und keine Aussage, ob die Bewegung technisch richtig ist.</p></article>';
   setupSkeletonPlayback(r,v);
 }
 
