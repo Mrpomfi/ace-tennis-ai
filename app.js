@@ -304,7 +304,7 @@ async function detectRacket(detector,canvas,landmarks){
  * racket box and searches around a motion-predicted position in later frames.
  * Detector results can re-anchor it, but distant false positives are ignored.
  */
-function createRacketVisualTracker(canvas,box){
+function createRacketVisualTracker(canvas,box,landmarks){
   const sampleSize=18;
   const width=canvas.width,height=canvas.height;
   const patchW=Math.max(12,Math.min(110,box.w*width*1.65));
@@ -326,6 +326,9 @@ function createRacketVisualTracker(canvas,box){
     return values;
   };
   let cx=(box.x+box.w/2)*width,cy=(box.y+box.h/2)*height;
+  const wristIndex=box.wristIndex??null,elbowIndex=box.elbowIndex??null;
+  const initialWrist=wristIndex!==null?landmarks?.[wristIndex]:null;
+  let wristOffset=initialWrist?{x:cx-initialWrist.x*width,y:cy-initialWrist.y*height}:null;
   let template=readTemplate(cx,cy),vx=0,vy=0,lost=0;
   const currentBox=(x,y,score,source)=>({...box,x:x/width-box.w/2,y:y/height-box.h/2,score:Math.max(box.score||0,score||0),source,trackingScore:score||0});
   const reseed=(nextCanvas,nextBox)=>{
@@ -338,13 +341,21 @@ function createRacketVisualTracker(canvas,box){
   };
   return {
     reseed,
-    track(nextCanvas){
+    track(nextCanvas,nextLandmarks){
       const w=nextCanvas.width,h=nextCanvas.height;
       if(w!==width||h!==height)return null;
       const pixels=ctx.getImageData(0,0,width,height).data;
-      const predictedX=Math.max(patchW/2,Math.min(width-patchW/2,cx+vx));
-      const predictedY=Math.max(patchH/2,Math.min(height-patchH/2,cy+vy));
-      const radiusX=Math.max(14,width*.10),radiusY=Math.max(14,height*.10),step=6;
+      let predictedX=cx+vx,predictedY=cy+vy;
+      const wrist=wristIndex!==null?nextLandmarks?.[wristIndex]:null;
+      const elbow=elbowIndex!==null?nextLandmarks?.[elbowIndex]:null;
+      if(wrist&&wristOffset&&(wrist.visibility??1)>.35){
+        const anchorX=wrist.x*width+wristOffset.x,anchorY=wrist.y*height+wristOffset.y;
+        predictedX=predictedX*.45+anchorX*.55;predictedY=predictedY*.45+anchorY*.55;
+      }
+      predictedX=Math.max(patchW/2,Math.min(width-patchW/2,predictedX));
+      predictedY=Math.max(patchH/2,Math.min(height-patchH/2,predictedY));
+      const torso=elbow&&wrist?Math.hypot((wrist.x-elbow.x)*width,(wrist.y-elbow.y)*height)*2:Math.min(width,height)*.18;
+      const radiusX=Math.max(18,width*.10,torso*.95),radiusY=Math.max(18,height*.10,torso*.95),step=6;
       let best=-1,bestX=predictedX,bestY=predictedY;
       for(let y=Math.max(patchH/2,predictedY-radiusY);y<=Math.min(height-patchH/2,predictedY+radiusY);y+=step){
         for(let x=Math.max(patchW/2,predictedX-radiusX);x<=Math.min(width-patchW/2,predictedX+radiusX);x+=step){
@@ -487,7 +498,7 @@ async function startForehandAnalysis(videoId){
       let racket=null;
       let tracked=null;
       if(racketTracker){
-        const rawTracked=racketTracker.track(canvas);
+        const rawTracked=racketTracker.track(canvas,lm);
         // A visual match is only a hypothesis: re-check it against the current
         // pose, torso exclusion, wrist distance and forearm direction every frame.
         tracked=rawTracked?selectRacketCandidate([rawTracked],lm,null):null;
@@ -495,7 +506,7 @@ async function startForehandAnalysis(videoId){
       }
       if(detectorRacket){
         if(!racketTracker){
-          racketTracker=createRacketVisualTracker(canvas,detectorRacket);
+          racketTracker=createRacketVisualTracker(canvas,detectorRacket,lm);
           racket={...detectorRacket,source:'Modell-Starttreffer'};
         }else{
           // Every detector candidate reaching this point has passed the
@@ -641,11 +652,17 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
   const torsoRight=Math.max(...[...shoulders,...hips].map(p=>p.x))+.18*torso;
   const torsoTop=Math.min(...shoulders.map(p=>p.y))-.12*torso;
   const torsoBottom=Math.max(...hips.map(p=>p.y))+.12*torso;
-  const arms=[[13,15],[14,16]].map(([elbowId,wristId])=>({elbow:point(elbowId),wrist:point(wristId)})).filter(a=>a.elbow&&a.wrist);
+  const arms=[[13,15,'links'],[14,16,'rechts']].map(([elbowId,wristId,side])=>({elbow:point(elbowId),wrist:point(wristId),elbowId,wristId,side})).filter(a=>a.elbow&&a.wrist);
   if(!arms.length)return null;
   const pointRectDistance=(p,l,t,r,b)=>{
     const dx=Math.max(l-p.x,0,p.x-r),dy=Math.max(t-p.y,0,p.y-b);
     return Math.hypot(dx,dy);
+  };
+  const pointSegmentDistance=(p,a,b)=>{
+    const dx=b.x-a.x,dy=b.y-a.y,length2=dx*dx+dy*dy;
+    if(!length2)return Math.hypot(p.x-a.x,p.y-a.y);
+    const t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/length2));
+    return Math.hypot(p.x-(a.x+t*dx),p.y-(a.y+t*dy));
   };
   let selected=null,bestRank=-Infinity,bestNearHand=Infinity,bestNearArm=Infinity;
   let nearestCandidate=null,nearestDistance=Infinity,checked=0,nearHand=0,nearArm=0;
@@ -659,59 +676,49 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
     // A real racket-head detection must have a meaningful short axis and area.
     const longSide=Math.max(candidate.w,candidate.h),shortSide=Math.min(candidate.w,candidate.h);
     const aspect=longSide/Math.max(1e-6,shortSide);
-    if(aspect>9||shortSide<torso*.035||candidate.w*candidate.h<torso*torso*.002){
+    if(aspect>9||shortSide<torso*.02||candidate.w*candidate.h<torso*torso*.001){
       rejectedCourtLine++;
       continue;
     }
-    const centerX=(l+r)/2,centerY=(t+b)/2;
-    if(centerX>=torsoLeft&&centerX<=torsoRight&&centerY>=torsoTop&&centerY<=torsoBottom){
+    const centerX=(l+r)/2,centerY=(t+b)/2,center={x:centerX,y:centerY};
+    const insideTorso=centerX>=torsoLeft&&centerX<=torsoRight&&centerY>=torsoTop&&centerY<=torsoBottom;
+    let bestForCandidate=null;
+    for(const arm of arms){
+      const wrist={x:arm.wrist.x,y:arm.wrist.y},elbow={x:arm.elbow.x,y:arm.elbow.y};
+      const wristDistance=pointRectDistance(wrist,l,t,r,b);
+      const vx=center.x-wrist.x,vy=center.y-wrist.y,headDistance=Math.hypot(vx,vy);
+      const armLength=Math.hypot(wrist.x-elbow.x,wrist.y-elbow.y);
+      const directionCos=armLength>0&&headDistance>0?(vx*(wrist.x-elbow.x)+vy*(wrist.y-elbow.y))/(armLength*headDistance):0;
+      const handRatio=wristDistance/torso,headRatio=headDistance/torso;
+      const armDistance=pointSegmentDistance(center,elbow,wrist)/torso;
+      const directionPenalty=Math.max(0,.05-directionCos);
+      const rank=candidate.score*(candidate.source==='Arm-Ausschnitt'?1.12:1)/(1+handRatio*.65+armDistance*.8+headRatio*.25+directionPenalty*.55);
+      if(!bestForCandidate||rank>bestForCandidate.rank)bestForCandidate={rank,handRatio,headRatio,armDistance,directionCos,arm};
+    }
+    if(!bestForCandidate)continue;
+    const {rank,handRatio,headRatio,armDistance,directionCos,arm}=bestForCandidate;
+    if(handRatio<bestNearHand)bestNearHand=handRatio;
+    if(armDistance<bestNearArm)bestNearArm=armDistance;
+    if(handRatio<=.55)nearHand++;
+    if(armDistance<=.35)nearArm++;
+    // The racket is held at the hand and may cross the torso in the camera view.
+    // Permit a compact, strongly hand/arm-connected candidate in that case.
+    if(insideTorso&&(handRatio>.62||armDistance>.28||candidate.w*candidate.h>torso*torso*.10)){
       rejectedTorso++;
       continue;
     }
-    let bestForCandidate=null;
-    for(const arm of arms){
-      const wrist={x:arm.wrist.x,y:arm.wrist.y};
-      const elbow={x:arm.elbow.x,y:arm.elbow.y};
-      const wristDistance=pointRectDistance(wrist,l,t,r,b);
-      const center={x:(l+r)/2,y:(t+b)/2};
-      const vx=center.x-wrist.x,vy=center.y-wrist.y,headDistance=Math.hypot(vx,vy);
-      const ax=wrist.x-elbow.x,ay=wrist.y-elbow.y,armLength=Math.hypot(ax,ay);
-      const directionCos=armLength>0&&headDistance>0?(vx*ax+vy*ay)/(armLength*headDistance):0;
-      const handRatio=wristDistance/torso,headRatio=headDistance/torso;
-      const armDistance=Math.min(
-        pointRectDistance(elbow,l,t,r,b),
-        wristDistance
-      )/torso;
-      const directionPenalty=Math.max(0,.15-directionCos);
-      const rank=candidate.score/(1+handRatio*.45+headRatio*.55+directionPenalty*.8);
-      if(!bestForCandidate||rank>bestForCandidate.rank){
-        bestForCandidate={rank,handRatio,headRatio,armDistance,directionCos,arm};
-      }
-    }
-    if(!bestForCandidate)continue;
-    const {rank,handRatio,headRatio,armDistance,directionCos}=bestForCandidate;
-    if(handRatio<bestNearHand)bestNearHand=handRatio;
-    if(armDistance<bestNearArm)bestNearArm=armDistance;
-    if(handRatio<=.48)nearHand++;
-    if(armDistance<=.30)nearArm++;
-    // A box almost on the wrist/torso is usually clothing or a hand artifact,
-    // not the racket head. Require a little separation and prefer the outward
-    // continuation of the forearm; still allow a moderately angled racket.
-    if(headRatio<.42){rejectedTooClose++;continue;}
-    if(headRatio>2.0){rejectedTooFar++;continue;}
-    if(directionCos<-.20){rejectedDirection++;continue;}
-    if(handRatio>1.65)continue;
-    const enriched={
-      ...candidate,
-      handDistance:handRatio,
-      armDistance,
-      headDistance:headRatio,
-      racketDirection:Number(directionCos.toFixed(3)),
-      linkVerified:true
-    };
-    if(handRatio+headRatio<nearestDistance){
-      nearestDistance=handRatio+headRatio;
-      nearestCandidate={x:Number(l.toFixed(4)),y:Number(t.toFixed(4)),w:Number(candidate.w.toFixed(4)),h:Number(candidate.h.toFixed(4)),score:Number(candidate.score.toFixed(4)),handDistance:Number(handRatio.toFixed(3)),headDistance:Number(headRatio.toFixed(3)),direction:Number(directionCos.toFixed(3))};
+    if(headRatio<.12){rejectedTooClose++;continue;}
+    if(headRatio>2.4){rejectedTooFar++;continue;}
+    if(directionCos<-.65){rejectedDirection++;continue;}
+    if(handRatio>2.1||armDistance>.85)continue;
+    const enriched={...candidate,handDistance:handRatio,armDistance,headDistance:headRatio,
+      racketDirection:Number(directionCos.toFixed(3)),armSide:arm.side,wristIndex:arm.wristId,
+      elbowIndex:arm.elbowId,linkVerified:true};
+    if(handRatio+armDistance<nearestDistance){
+      nearestDistance=handRatio+armDistance;
+      nearestCandidate={x:Number(l.toFixed(4)),y:Number(t.toFixed(4)),w:Number(candidate.w.toFixed(4)),h:Number(candidate.h.toFixed(4)),
+        score:Number(candidate.score.toFixed(4)),handDistance:Number(handRatio.toFixed(3)),armDistance:Number(armDistance.toFixed(3)),
+        headDistance:Number(headRatio.toFixed(3)),direction:Number(directionCos.toFixed(3))};
     }
     if(rank>bestRank){bestRank=rank;selected=enriched;}
   }
