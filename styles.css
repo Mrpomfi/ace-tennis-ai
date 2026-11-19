@@ -58,3 +58,7 @@ body:has(.skeleton-player.is-expanded){overflow:hidden}
 .skeleton-speed-buttons button{border:1px solid #536273;border-radius:7px;padding:9px 10px;background:#2b3948;color:#fff;font-size:12px;font-weight:700;min-width:48px;touch-action:manipulation}
 .skeleton-speed-buttons button.active{background:#c7f36b;border-color:#c7f36b;color:#101b2a}
 .skeleton-player.is-expanded .skeleton-speed-row{width:100%;flex:0 0 auto;padding-bottom:max(9px,env(safe-area-inset-bottom))}
+
+/* ACE Movement Lab – Handgelenk-Geschwindigkeit und Phasenfenster */
+.wrist-chart{margin-top:10px}
+.wrist-chart .tiny{margin:0 0 7px;line-height:1.45}
