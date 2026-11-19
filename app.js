@@ -23,7 +23,7 @@ async function renderVideos(){const items=(await all('videos')).sort((a,b)=>b.cr
 card.querySelector('[data-delete]').onclick=async()=>{if(confirm('Dieses Video und seine Notiz löschen?')){await del('videos',v.id);for(const a of await all('analyses'))if(a.videoId===v.id)await del('analyses',a.id);URL.revokeObjectURL(url);renderVideos();renderHome()}};card.querySelector('[data-export]').onclick=()=>{const a=document.createElement('a');a.href=url;a.download=v.name||'ace-video';a.click()};}}
 
 // ACE Movement Lab – lokale Einzelbildanalyse mit MediaPipe Pose Landmarker.
-let analysisBusy=false;
+let analysisBusy=false,analysisPlaybackUrl=null,playbackFrame=null;
 const MP_MODEL='./vendor/mediapipe/pose_landmarker_lite.task';
 async function getPoseTask(){
   setStatus('analysisStatus','Bewegungsmodell wird vorbereitet …');
@@ -79,7 +79,7 @@ function detectStrokePhases(frames){
   return {status:(end-start>=6&&peak>start+1&&peak<end-1)?'estimated':'low-confidence',side:best.side,peakTime:at(peak),peakSpeed:Number(best.peak.speed.toFixed(2)),phases};
 }
 async function startForehandAnalysis(videoId){
-  if(analysisBusy)return;analysisBusy=true;const status=$('analysisStatus'),out=$('analysisResult');out.innerHTML='';
+  if(analysisBusy)return;analysisBusy=true;const status=$('analysisStatus'),out=$('analysisResult');clearSkeletonPlayback();out.innerHTML='';
   let videoEl,objectUrl,task;
   try{
     const item=await get('videos',videoId);if(!item)throw Error('Video nicht gefunden');
@@ -97,9 +97,9 @@ async function startForehandAnalysis(videoId){
       status.textContent='Vorhand wird untersucht: Bild '+(i+1)+' von '+times.length+' …';
       const seeked=waitEvent(videoEl,'seeked');videoEl.currentTime=times[i];await seeked;
       const scale=Math.min(1,640/(videoEl.videoWidth||640));canvas.width=Math.round((videoEl.videoWidth||640)*scale);canvas.height=Math.round((videoEl.videoHeight||360)*scale);ctx.drawImage(videoEl,0,0,canvas.width,canvas.height);
-      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
+      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
       const visible=lm.filter(p=>(p.visibility??1)>.4).length;
-      const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null};
+      const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:lm.map(p=>({x:p.x,y:p.y,visibility:p.visibility??1}))};
       const torsoLeft=Math.max(.05,Math.hypot(lm[11].x-lm[23].x,lm[11].y-lm[23].y));
       const torsoRight=Math.max(.05,Math.hypot(lm[12].x-lm[24].x,lm[12].y-lm[24].y));
       if([lm[11],lm[15],lm[23]].every(p=>(p.visibility??1)>.4))frame.leftArmPoint={x:(lm[15].x-lm[11].x)/torsoLeft,y:(lm[15].y-lm[11].y)/torsoLeft};
@@ -149,6 +149,68 @@ function angleChart(frames,keys,title){
   const legend=series.map(s=>'<span class="chart-legend-item"><i style="background:'+s.color+'"></i>'+s.label+'</span>').join('');
   return '<section class="angle-chart"><b>'+title+'</b><div class="chart-legend">'+legend+'</div><svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="'+title+': Gelenkwinkel im Zeitverlauf von '+first.toFixed(1)+' bis '+last.toFixed(1)+' Sekunden">'+grid+paths+'<text x="'+left+'" y="'+(height-8)+'" fill="#8c97a3" font-size="10">0 s</text><text x="'+(width-right)+'" y="'+(height-8)+'" text-anchor="end" fill="#8c97a3" font-size="10">'+last.toFixed(1)+' s</text></svg></section>';
 }
+function clearSkeletonPlayback(){
+  if(playbackFrame!==null){cancelAnimationFrame(playbackFrame);playbackFrame=null;}
+  if(analysisPlaybackUrl){URL.revokeObjectURL(analysisPlaybackUrl);analysisPlaybackUrl=null;}
+}
+function phaseColorAt(time,phases){
+  const list=phases||[];
+  const contains=name=>list.find(p=>p.name===name&&time>=p.start&&time<=p.end);
+  if(contains('Treffpunkt-Kandidat'))return '#ff4d4d';
+  if(contains('Beschleunigung'))return '#ffad32';
+  if(contains('Ausschwung'))return '#45d483';
+  if(contains('Ausholen / Vorbereitung'))return '#55aaff';
+  return '#c7f36b';
+}
+function poseAtTime(frames,time){
+  if(!frames?.length)return null;
+  let before=null,after=null;
+  for(const frame of frames){
+    if(!frame.pose)continue;
+    if(frame.time<=time)before=frame;
+    if(frame.time>=time){after=frame;break;}
+  }
+  if(before&&after&&before!==after&&after.time-before.time<=.4){
+    const ratio=(time-before.time)/(after.time-before.time);
+    return before.pose.map((p,i)=>({x:p.x+(after.pose[i].x-p.x)*ratio,y:p.y+(after.pose[i].y-p.y)*ratio,visibility:Math.min(p.visibility,after.pose[i].visibility)}));
+  }
+  const nearest=before||after;
+  return nearest&&Math.abs(nearest.time-time)<=.22?nearest.pose:null;
+}
+function drawPlaybackPose(canvas,pose,color){
+  const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);if(!pose)return;
+  ctx.lineWidth=Math.max(3,w/180);ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=color;ctx.fillStyle='#ffffff';
+  ctx.beginPath();
+  for(const [a,b] of POSE_LINKS){
+    const p=pose[a],q=pose[b];if(!p||!q||p.visibility<.35||q.visibility<.35)continue;
+    ctx.moveTo(p.x*w,p.y*h);ctx.lineTo(q.x*w,q.y*h);
+  }
+  ctx.stroke();
+  for(const p of pose){if(!p||p.visibility<.35)continue;ctx.beginPath();ctx.arc(p.x*w,p.y*h,Math.max(2,w/150),0,Math.PI*2);ctx.fill();}
+}
+function setupSkeletonPlayback(r,v){
+  const video=$('skeletonVideo'),canvas=$('skeletonCanvas'),label=$('skeletonPhaseLabel');
+  if(!video||!canvas||!v?.blob)return;
+  clearSkeletonPlayback();analysisPlaybackUrl=URL.createObjectURL(v.blob);video.src=analysisPlaybackUrl;
+  const render=()=>{
+    if(!video.videoWidth||!video.videoHeight)return;
+    if(canvas.width!==video.videoWidth||canvas.height!==video.videoHeight){canvas.width=video.videoWidth;canvas.height=video.videoHeight;}
+    const t=video.currentTime,pose=poseAtTime(r.frames,t),phase=(r.strokePhases?.phases||[]).find(p=>t>=p.start&&t<=p.end);
+    label.textContent=phase?.name||'Keine Phase zugeordnet';
+    drawPlaybackPose(canvas,pose,phaseColorAt(t,r.strokePhases?.phases));
+  };
+  const animate=()=>{render();if(!video.paused&&!video.ended)playbackFrame=requestAnimationFrame(animate);else playbackFrame=null;};
+  video.addEventListener('loadedmetadata',render,{once:true});
+  video.addEventListener('loadeddata',render,{once:true});
+  video.addEventListener('timeupdate',render);
+  video.addEventListener('seeked',render);
+  video.addEventListener('play',()=>{if(playbackFrame===null)playbackFrame=requestAnimationFrame(animate);});
+  video.addEventListener('pause',()=>{if(playbackFrame!==null){cancelAnimationFrame(playbackFrame);playbackFrame=null;}render();});
+  video.addEventListener('ended',()=>{if(playbackFrame!==null){cancelAnimationFrame(playbackFrame);playbackFrame=null;}render();});
+  video.load();
+}
+
 function renderAnalysisResult(r,v){
   const angleLabel=r.angle==='side'?'Seitlich':r.angle==='front'?'Von vorne':'Nicht angegeben';
   const side=(label,s)=>'<div class="metric-row"><span>'+label+'</span><b>'+formatStats(s)+'</b></div>';
@@ -158,7 +220,8 @@ function renderAnalysisResult(r,v){
   const strokeMarkup=stroke?.phases?.length?'<div class="stroke-phase-list">'+stroke.phases.map(p=>'<div class="stroke-phase"><b>'+esc(p.name)+'</b><small>'+p.start.toFixed(2)+'–'+p.end.toFixed(2)+' s</small></div>').join('')+'</div>':'<p class="tiny">'+esc(stroke?.reason||'Keine zuverlässige Phasenschätzung möglich.')+'</p>';
   const sideLabel=stroke?.side==='left'?'die linke Seite (größere erkannte Handgelenkbewegung)':stroke?.side==='right'?'die rechte Seite (größere erkannte Handgelenkbewegung)':'keine Seite';
   const tips=[];if(r.coverage<80)tips.push('Filme bei gutem Licht und halte Kopf, Füße und beide Arme während des gesamten Schlages im Bild.');if(r.angle==='unknown')tips.push('Wähle beim nächsten Video die Kameraperspektive aus.');tips.push('Nutze möglichst dieselbe Kameraposition und denselben Abstand, wenn du Fortschritte vergleichen möchtest.');
-  $('analysisResult').innerHTML='<article class="entry"><div class="entry-top"><b>Vorhand · '+dateText(v.date)+'</b><span class="pill">'+r.coverage+'% Pose-Erkennung</span></div><small>Perspektive: '+angleLabel+' · '+r.detected+'/'+r.sampled+' analysierte Bilder</small>'+(r.preview?'<img alt="Erkanntes Körperskelett" src="'+r.preview+'" style="width:100%;border-radius:10px;margin-top:10px;background:#111">':'')+'<h3>Automatische Schlagphasen (experimentell)</h3><p class="tiny">Geschätzt aus der Bewegung des Handgelenks relativ zur Schulter. Ausgewertet wird '+sideLabel+'. Der Treffpunkt ist nur ein Kandidaten-Zeitfenster, kein nachgewiesener Ballkontakt.</p>'+strokeMarkup+'<p class="tiny">'+(stroke?.status==='estimated'?'Bewegungsmuster ausreichend deutlich für eine erste Schätzung.':'Die Phasenschätzung ist unsicher und sollte im Video überprüft werden.')+'</p><h3>Winkelverlauf über die gesamte Aufnahme</h3><p class="tiny">Die Kurven zeigen die erkannten Winkel Bild für Bild. Lücken bedeuten, dass ein Gelenk in diesem Einzelbild nicht sicher erkannt wurde.</p>'+(r.frames?.length?angleChart(r.frames,[{key:'leftElbow',label:'Links',side:'left'},{key:'rightElbow',label:'Rechts',side:'right'}],'Ellenbogen'): '<p class="tiny">Keine Winkelmesswerte vorhanden.</p>')+(r.frames?.length?angleChart(r.frames,[{key:'leftKnee',label:'Links',side:'left'},{key:'rightKnee',label:'Rechts',side:'right'}],'Knie'):'')+'<h3>Anfang, Mitte und Ende</h3>'+(phases||'<p class="tiny">Zu wenige Messwerte für den Zeitverlauf.</p>')+'<h3>Winkelübersicht</h3>'+side('Ellenbogen links',r.elbowLeft)+side('Ellenbogen rechts',r.elbowRight)+side('Knie links',r.kneeLeft)+side('Knie rechts',r.kneeRight)+'<h3>Einordnung</h3><p>'+coverageText+'</p><h3>Für die nächste Aufnahme</h3><ul>'+tips.map(t=>'<li>'+esc(t)+'</li>').join('')+'</ul><p class="tiny">Noch nicht erkannt werden Schläger, Ball, Treffpunkt, Schlagrichtung oder 3D-Rotation. Deshalb gibt es bewusst keine Techniknote und keine Aussage, ob die Bewegung technisch richtig ist.</p></article>';
+  $('analysisResult').innerHTML='<article class="entry"><div class="entry-top"><b>Vorhand · '+dateText(v.date)+'</b><span class="pill">'+r.coverage+'% Pose-Erkennung</span></div><small>Perspektive: '+angleLabel+' · '+r.detected+'/'+r.sampled+' analysierte Bilder</small>'+(r.frames?.some(f=>f.pose)?'<h3>Video mit animiertem Skelett</h3><p class="tiny">Das Skelett folgt den erkannten Gelenkpunkten. Die Zwischenpositionen werden zwischen den analysierten Bildern interpoliert.</p><div class="skeleton-player"><video id="skeletonVideo" controls playsinline preload="metadata"></video><canvas id="skeletonCanvas" aria-hidden="true"></canvas></div><div id="skeletonPhaseLabel" class="skeleton-phase-label">Video wird vorbereitet …</div><div class="skeleton-legend"><span><i style="background:#55aaff"></i>Ausholen</span><span><i style="background:#ffad32"></i>Beschleunigung</span><span><i style="background:#ff4d4d"></i>Treffpunkt-Kandidat</span><span><i style="background:#45d483"></i>Ausschwung</span></div>':(r.preview?'<img alt="Erkanntes Körperskelett" src="'+r.preview+'" style="width:100%;border-radius:10px;margin-top:10px;background:#111">':'<p class="tiny">Für diese Analyse sind noch keine Gelenkpunkte gespeichert. Bitte das Video erneut analysieren.</p>'))+'<h3>Automatische Schlagphasen (experimentell)</h3><p class="tiny">Geschätzt aus der Bewegung des Handgelenks relativ zur Schulter. Ausgewertet wird '+sideLabel+'. Der Treffpunkt ist nur ein Kandidaten-Zeitfenster, kein nachgewiesener Ballkontakt.</p>'+strokeMarkup+'<p class="tiny">'+(stroke?.status==='estimated'?'Bewegungsmuster ausreichend deutlich für eine erste Schätzung.':'Die Phasenschätzung ist unsicher und sollte im Video überprüft werden.')+'</p><h3>Winkelverlauf über die gesamte Aufnahme</h3><p class="tiny">Die Kurven zeigen die erkannten Winkel Bild für Bild. Lücken bedeuten, dass ein Gelenk in diesem Einzelbild nicht sicher erkannt wurde.</p>'+(r.frames?.length?angleChart(r.frames,[{key:'leftElbow',label:'Links',side:'left'},{key:'rightElbow',label:'Rechts',side:'right'}],'Ellenbogen'): '<p class="tiny">Keine Winkelmesswerte vorhanden.</p>')+(r.frames?.length?angleChart(r.frames,[{key:'leftKnee',label:'Links',side:'left'},{key:'rightKnee',label:'Rechts',side:'right'}],'Knie'):'')+'<h3>Anfang, Mitte und Ende</h3>'+(phases||'<p class="tiny">Zu wenige Messwerte für den Zeitverlauf.</p>')+'<h3>Winkelübersicht</h3>'+side('Ellenbogen links',r.elbowLeft)+side('Ellenbogen rechts',r.elbowRight)+side('Knie links',r.kneeLeft)+side('Knie rechts',r.kneeRight)+'<h3>Einordnung</h3><p>'+coverageText+'</p><h3>Für die nächste Aufnahme</h3><ul>'+tips.map(t=>'<li>'+esc(t)+'</li>').join('')+'</ul><p class="tiny">Noch nicht erkannt werden Schläger, Ball, Treffpunkt, Schlagrichtung oder 3D-Rotation. Deshalb gibt es bewusst keine Techniknote und keine Aussage, ob die Bewegung technisch richtig ist.</p></article>';
+  setupSkeletonPlayback(r,v);
 }
 
 $('saveMatch').addEventListener('click',async()=>{await add('matches',{date:$('matchDate').value||today(),opponent:$('opponent').value.trim(),result:$('matchResult').value,score:$('matchScore').value.trim(),surface:$('matchSurface').value,good:$('matchGood').value,improve:$('matchImprove').value,mood:Number($('matchMood').value),created:Date.now()});['opponent','matchScore','matchGood','matchImprove'].forEach(id=>$(id).value='');setStatus('matchStatus','Match wurde lokal gespeichert.');renderMatches();renderHome()});
