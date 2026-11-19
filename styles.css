@@ -32,3 +32,18 @@
 .skeleton-legend{display:flex;flex-wrap:wrap;gap:8px 13px;margin:2px 0 12px}
 .skeleton-legend span{display:flex;align-items:center;gap:5px;font-size:9px;color:#778391}
 .skeleton-legend i{display:inline-block;width:9px;height:9px;border-radius:50%}
+
+/* Custom fullscreen player keeps the skeleton canvas visible on iPhone */
+.skeleton-stage{position:relative;width:100%;aspect-ratio:16/9;background:#080a0d;overflow:hidden}
+.skeleton-stage video{display:block;width:100%;height:100%;object-fit:contain;background:#080a0d}
+.skeleton-stage canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.skeleton-player{border-radius:10px;overflow:hidden;background:#080a0d}
+.skeleton-controls{display:flex;align-items:center;gap:8px;padding:8px;background:#111923;color:#fff;line-height:1}
+.skeleton-controls button{border:0;border-radius:7px;padding:8px 10px;background:#2b3948;color:#fff;font-size:11px;white-space:nowrap}
+.skeleton-controls input{flex:1;min-width:35px;accent-color:#c7f36b}
+.skeleton-controls span{font-size:10px;white-space:nowrap}
+.skeleton-player.is-expanded{position:fixed;inset:0;z-index:99999;width:100vw;height:100dvh;border-radius:0;display:flex;flex-direction:column;justify-content:center;background:#000;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.skeleton-player.is-expanded .skeleton-stage{width:100%;height:calc(100% - 54px);max-height:calc(100% - 54px);aspect-ratio:auto;flex:1;display:flex;align-items:center;justify-content:center}
+.skeleton-player.is-expanded .skeleton-stage video{width:100%;height:100%;object-fit:contain}
+.skeleton-player.is-expanded .skeleton-controls{flex:0 0 54px;padding:7px 10px}
+body:has(.skeleton-player.is-expanded){overflow:hidden}
