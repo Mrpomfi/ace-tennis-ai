@@ -36,17 +36,19 @@ async function getPoseTask(){
 const RACKET_MODEL_URL='./models/courtside-yolov11n.onnx';
 let ortLoadingPromise=null;
 async function loadOnnxRuntime(){
-  if(window.ort?.InferenceSession)return window.ort;
-  if(!ortLoadingPromise){
-    ortLoadingPromise=new Promise((resolve,reject)=>{
-      const script=document.createElement('script');
-      script.src='./vendor/onnxruntime-web/ort.wasm.min.js';
-      script.onload=()=>window.ort?.InferenceSession?resolve(window.ort):reject(Error('ONNX Runtime Web konnte nicht gestartet werden.'));
-      script.onerror=()=>reject(Error('ONNX Runtime Web konnte nicht geladen werden.'));
-      document.head.appendChild(script);
-    }).catch(error=>{ortLoadingPromise=null;throw error;});
+  let ort=window.ort;
+  if(!ort?.InferenceSession){
+    if(!ortLoadingPromise){
+      ortLoadingPromise=new Promise((resolve,reject)=>{
+        const script=document.createElement('script');
+        script.src='./vendor/onnxruntime-web/ort.wasm.min.js';
+        script.onload=()=>window.ort?.InferenceSession?resolve(window.ort):reject(Error('ONNX Runtime Web konnte nicht gestartet werden.'));
+        script.onerror=()=>reject(Error('ONNX Runtime Web konnte nicht geladen werden.'));
+        document.head.appendChild(script);
+      }).catch(error=>{ortLoadingPromise=null;throw error;});
+    }
+    ort=await ortLoadingPromise;
   }
-  const ort=await ortLoadingPromise;
   ort.env.wasm.wasmPaths='./vendor/onnxruntime-web/';
   ort.env.wasm.numThreads=1;
   return ort;
@@ -87,7 +89,7 @@ async function getRacketTask(){
       const rows=output.dims?.[1]||0;
       for(let i=0;i<rows;i++){
         const j=i*6,score=values[j+4],classId=Math.round(values[j+5]);
-        if(classId!==0||score<.15)continue;
+        if(classId!==0||!Number.isFinite(score)||score<.15)continue;
         const x1=values[j],y1=values[j+1],x2=values[j+2],y2=values[j+3];
         if(!Number.isFinite(x1+y1+x2+y2))continue;
         const x=Math.max(0,Math.min(canvas.width,(x1-offsetX)/scale));
