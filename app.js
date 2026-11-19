@@ -326,18 +326,34 @@ function createRacketVisualTracker(canvas,box,landmarks){
     return values;
   };
   let cx=(box.x+box.w/2)*width,cy=(box.y+box.h/2)*height;
-  const wristIndex=box.wristIndex??null,elbowIndex=box.elbowIndex??null;
-  const initialWrist=wristIndex!==null?landmarks?.[wristIndex]:null;
-  let wristOffset=initialWrist?{x:cx-initialWrist.x*width,y:cy-initialWrist.y*height}:null;
+  // Keep the racket head attached to the hand in the *moving forearm
+  // coordinate system*, not at a fixed screen-space offset. This matters
+  // when the elbow/wrist rotate during the backswing and forward swing.
+  let wristIndex=box.wristIndex??null,elbowIndex=box.elbowIndex??null;
+  let wristOffset=null,forearmOffset=null,currentPose=landmarks;
+  const updateHandAnchor=(pose,headX,headY)=>{
+    const wrist=wristIndex!==null?pose?.[wristIndex]:null;
+    const elbow=elbowIndex!==null?pose?.[elbowIndex]:null;
+    if(!wrist||!elbow||(wrist.visibility??1)<.35||(elbow.visibility??1)<.35)return;
+    const wx=wrist.x*width,wy=wrist.y*height,ex=elbow.x*width,ey=elbow.y*height;
+    const length=Math.hypot(wx-ex,wy-ey);
+    if(length<4)return;
+    const ux=(wx-ex)/length,uy=(wy-ey)/length,dx=headX-wx,dy=headY-wy;
+    forearmOffset={along:dx*ux+dy*uy,across:dx*(-uy)+dy*ux};
+    wristOffset={x:dx,y:dy};
+  };
+  updateHandAnchor(landmarks,cx,cy);
   let template=readTemplate(cx,cy),vx=0,vy=0,lost=0;
   const currentBox=(x,y,score,source)=>({...box,x:x/width-box.w/2,y:y/height-box.h/2,score:Math.max(box.score||0,score||0),source,trackingScore:score||0});
   const reseed=(nextCanvas,nextBox)=>{
     // A freshly detected candidate has already passed the hand/arm geometry
-    // checks. Allow it to recover the tracker even after a false lock-on to
-    // clothing or another nearby object; a distance gate here caused lock-in.
+    // checks. It may recover tracking after drift onto clothing or furniture.
     if(nextCanvas.width!==width||nextCanvas.height!==height)return false;
     const nx=(nextBox.x+nextBox.w/2)*nextCanvas.width,ny=(nextBox.y+nextBox.h/2)*nextCanvas.height;
-    cx=nx;cy=ny;vx=0;vy=0;template=readTemplate(cx,cy);box={...nextBox};lost=0;return true;
+    cx=nx;cy=ny;vx=0;vy=0;box={...nextBox};
+    wristIndex=nextBox.wristIndex??wristIndex;elbowIndex=nextBox.elbowIndex??elbowIndex;
+    wristOffset=null;forearmOffset=null;updateHandAnchor(currentPose,nx,ny);
+    template=readTemplate(cx,cy);lost=0;return true;
   };
   return {
     reseed,
@@ -346,11 +362,21 @@ function createRacketVisualTracker(canvas,box,landmarks){
       if(w!==width||h!==height)return null;
       const pixels=ctx.getImageData(0,0,width,height).data;
       let predictedX=cx+vx,predictedY=cy+vy;
+      currentPose=nextLandmarks||currentPose;
       const wrist=wristIndex!==null?nextLandmarks?.[wristIndex]:null;
       const elbow=elbowIndex!==null?nextLandmarks?.[elbowIndex]:null;
-      if(wrist&&wristOffset&&(wrist.visibility??1)>.35){
-        const anchorX=wrist.x*width+wristOffset.x,anchorY=wrist.y*height+wristOffset.y;
-        predictedX=predictedX*.45+anchorX*.55;predictedY=predictedY*.45+anchorY*.55;
+      if(wrist&&elbow&&(wrist.visibility??1)>.35&&(elbow.visibility??1)>.35){
+        const wx=wrist.x*width,wy=wrist.y*height,ex=elbow.x*width,ey=elbow.y*height;
+        const length=Math.hypot(wx-ex,wy-ey);
+        if(length>4&&forearmOffset){
+          const ux=(wx-ex)/length,uy=(wy-ey)/length;
+          const anchorX=wx+ux*forearmOffset.along-uy*forearmOffset.across;
+          const anchorY=wy+uy*forearmOffset.along+ux*forearmOffset.across;
+          predictedX=predictedX*.25+anchorX*.75;predictedY=predictedY*.25+anchorY*.75;
+        }else if(wristOffset){
+          predictedX=predictedX*.35+(wx+wristOffset.x)*.65;
+          predictedY=predictedY*.35+(wy+wristOffset.y)*.65;
+        }
       }
       predictedX=Math.max(patchW/2,Math.min(width-patchW/2,predictedX));
       predictedY=Math.max(patchH/2,Math.min(height-patchH/2,predictedY));
