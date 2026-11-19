@@ -128,7 +128,9 @@ async function getRacketTask(){
         // Das Modell erkennt den echten Schläger in den Testframes oft nur mit 1–5 %.
         // Niedrige Scores werden aufgenommen; die anschließende Hand-/Arm-Geometrie
         // filtert räumlich unplausible Treffer (z. B. Spielzeug am unteren Bildrand).
-        if(score<.01)return;
+        // Etwas niedrigere Rohschwelle: die räumliche Prüfung entscheidet
+        // anschließend, ob der Treffer tatsächlich zum Schlägerkopf passt.
+        if(score<.005)return;
         const box=mapBox(x1,y1,x2,y2,score,0);
         if(box)candidates.push(box);
       };
@@ -229,8 +231,10 @@ async function detectRacket(detector,canvas,landmarks){
     // Keep the first crop close to the grip, then search farther along the
     // forearm axis so a racket head angled away from the hand remains visible.
     return [
-      {factor:2.4,offset:.25},
-      {factor:3.8,offset:.8}
+      // Die bisherigen Ausschnitte lagen zu nahe am Griff. Der Schlägerkopf
+      // befindet sich meist deutlich weiter außerhalb der Hand in Schlagrichtung.
+      {factor:2.2,offset:.65},
+      {factor:4.4,offset:1.05}
     ].map(({factor,offset})=>{
       const sideLength=torso*factor,cx=wx+dx/length*torso*offset,cy=wy+dy/length*torso*offset;
       const sx=Math.max(0,Math.min(width-sideLength,cx-sideLength/2));
@@ -540,7 +544,7 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
   };
   let selected=null,bestRank=-Infinity,bestNearHand=Infinity,bestNearArm=Infinity;
   let nearestCandidate=null,nearestDistance=Infinity,checked=0,nearHand=0,nearArm=0;
-  let rejectedCourtLine=0,rejectedTooFar=0,rejectedDirection=0;
+  let rejectedCourtLine=0,rejectedTooClose=0,rejectedTooFar=0,rejectedDirection=0;
   for(const candidate of candidates){
     checked++;
     const l=candidate.x,t=candidate.y,r=l+candidate.w,b=t+candidate.h;
@@ -580,10 +584,12 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
     if(armDistance<bestNearArm)bestNearArm=armDistance;
     if(handRatio<=.48)nearHand++;
     if(armDistance<=.30)nearArm++;
-    // First find the racket head independently of a box touching the wrist.
-    // Then verify a plausible hand-to-head distance and orientation corridor.
-    if(headRatio>1.9){rejectedTooFar++;continue;}
-    if(directionCos<-.65){rejectedDirection++;continue;}
+    // A box almost on the wrist/torso is usually clothing or a hand artifact,
+    // not the racket head. Require a little separation and prefer the outward
+    // continuation of the forearm; still allow a moderately angled racket.
+    if(headRatio<.42){rejectedTooClose++;continue;}
+    if(headRatio>2.0){rejectedTooFar++;continue;}
+    if(directionCos<-.20){rejectedDirection++;continue;}
     if(handRatio>1.65)continue;
     const enriched={
       ...candidate,
@@ -604,8 +610,8 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
     bestHandDistance:Number.isFinite(bestNearHand)?Number(bestNearHand.toFixed(3)):null,
     bestArmDistance:Number.isFinite(bestNearArm)?Number(bestNearArm.toFixed(3)):null,
     nearestCandidate,selected:!!selected,
-    rejectedCourtLine,rejectedTooFar,rejectedDirection,
-    rule:'Schlägerkopf unabhängig gesucht; Handabstand, Armrichtung und Linienform anschließend geprüft'
+    rejectedCourtLine,rejectedTooClose,rejectedTooFar,rejectedDirection,
+    rule:'Schlägerkopf mit Mindestabstand zum Handgelenk gesucht; Armrichtung und Linienform geprüft'
   };
   return selected;
 }
