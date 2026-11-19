@@ -71,29 +71,42 @@ function detectStrokePhases(frames){
   const peakPoint=points.findIndex(p=>p.i===peak.i);
   if(peakPoint<4||peakPoint>=points.length-3)return {status:'uncertain',side:best.side,phases:[],reason:'Zu wenig Bewegung vor oder nach dem schnellsten Armabschnitt.'};
   const threshold=Math.max(.12,peak.speed*.14);
-  let motionStartIndex=-1;
-  for(let i=0;i<smooth.length;i++){
-    if(smooth[i]?.speed>=threshold&&smooth.slice(i,Math.min(smooth.length,i+3)).filter(x=>x&&x.speed>=threshold).length>=2){motionStartIndex=i;break;}
+  const peakIndex=smooth.findIndex(x=>x?.i===peak.i);
+  let motionStartIndex=peakIndex,belowThreshold=0;
+  for(let i=peakIndex-1;i>=0;i--){
+    if(smooth[i]&&smooth[i].speed>=threshold){motionStartIndex=i;belowThreshold=0;}
+    else if(++belowThreshold>=2)break;
   }
-  if(motionStartIndex<0)return {status:'uncertain',side:best.side,phases:[],reason:'Keine zusammenhängende Schlagbewegung mit ausreichender Geschwindigkeit erkannt.'};
+  if(motionStartIndex<0||!smooth[motionStartIndex])return {status:'uncertain',side:best.side,phases:[],reason:'Keine zusammenhängende Beschleunigungsphase erkannt.'};
   const motionStartFrame=smooth[motionStartIndex].i;
-  const prePeak=points.filter(p=>p.i>=motionStartFrame&&p.i<peak.i);
-  if(prePeak.length<3)return {status:'low-confidence',side:best.side,phases:[],reason:'Eine getrennte Ausholbewegung vor der Beschleunigung ließ sich nicht sicher abgrenzen.'};
-  const radius=p=>Math.hypot(p.p.x,p.p.y);
-  const farthest=prePeak.reduce((a,b)=>radius(b)>radius(a)?b:a,prePeak[0]);
-  const first=points.find(p=>p.i===motionStartFrame)||points[0];
-  const clearLoad=radius(farthest)>=radius(first)*1.08&&farthest.i<peak.i-2;
+  const preparationPoints=points.filter(p=>p.i<motionStartFrame);
+  let loadStart=null,farthest=null,clearLoad=false;
+  if(preparationPoints.length>=4){
+    const baselinePoints=preparationPoints.slice(0,3);
+    const baseline={x:baselinePoints.reduce((s,p)=>s+p.p.x,0)/baselinePoints.length,y:baselinePoints.reduce((s,p)=>s+p.p.y,0)/baselinePoints.length};
+    const distance=p=>Math.hypot(p.p.x-baseline.x,p.p.y-baseline.y);
+    farthest=preparationPoints.reduce((a,b)=>distance(b)>distance(a)?b:a,preparationPoints[0]);
+    let pathLength=0,previous=baseline;
+    for(const p of preparationPoints){pathLength+=Math.hypot(p.p.x-previous.x,p.p.y-previous.y);previous=p.p;}
+    const excursion=distance(farthest);
+    const coherence=pathLength>0?excursion/pathLength:0;
+    const onsetThreshold=Math.max(.035,excursion*.15);
+    loadStart=preparationPoints.find(p=>distance(p)>=onsetThreshold)||null;
+    clearLoad=excursion>=.10&&coherence>=.50&&!!loadStart&&farthest.i>=loadStart.i+2;
+  }
   let motionEnd=points[points.length-1].i;
   const afterPeak=smooth.filter(x=>x&&x.i>peak.i);
   for(let i=0;i<afterPeak.length-1;i++){if(afterPeak[i].speed<threshold&&afterPeak[i+1].speed<threshold){motionEnd=afterPeak[i+1].i;break;}}
   const sample=frames.length>1?(frames[frames.length-1].time-frames[0].time)/(frames.length-1):.1;
   const at=i=>frames[Math.max(0,Math.min(frames.length-1,i))]?.time??0;
   const phases=[];
-  if(clearLoad&&farthest.i>motionStartFrame+1)phases.push({name:'Ausholen / Vorbereitung',start:at(motionStartFrame),end:at(farthest.i)});
+  if(clearLoad)phases.push({name:'Ausholen / Vorbereitung',start:at(loadStart.i),end:at(farthest.i)});
   phases.push({name:'Beschleunigung',start:at(clearLoad?farthest.i:motionStartFrame),end:at(peak.i)});
   phases.push({name:'Treffpunkt-Kandidat',start:Math.max(0,peak.time-sample/2),end:peak.time+sample/2});
   if(motionEnd>peak.i+1)phases.push({name:'Ausschwung',start:at(Math.min(motionEnd,peak.i+1)),end:at(motionEnd)});
-  return {status:clearLoad&&motionEnd>peak.i+1?'estimated':'low-confidence',side:best.side,peakTime:peak.time,peakSpeed:Number(peak.speed.toFixed(2)),phases,reason:clearLoad?'Ausholen nur bei erkennbarem maximalem Abstand vor der Beschleunigung ausgewiesen.':'Kein eindeutiges Ausholmuster erkannt; die Phase wird nicht künstlich ergänzt.'};
+  const status=clearLoad&&motionEnd>peak.i+1?'estimated':'low-confidence';
+  const reason=clearLoad?'Ausholen anhand einer zusammenhängenden Handgelenkbewegung vor der Beschleunigung erkannt.': 'Keine ausreichend klare Ausholbewegung vor der Beschleunigung erkannt; die Phase wird nicht künstlich ergänzt.';
+  return {status,side:best.side,peakTime:peak.time,peakSpeed:Number(peak.speed.toFixed(2)),phases,reason};
 }
 async function startForehandAnalysis(videoId){
   if(analysisBusy)return;analysisBusy=true;const status=$('analysisStatus'),out=$('analysisResult');clearSkeletonPlayback();out.innerHTML='';
