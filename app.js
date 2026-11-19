@@ -203,7 +203,16 @@ function setupSkeletonPlayback(r,v){
   clearSkeletonPlayback();analysisPlaybackUrl=URL.createObjectURL(v.blob);video.src=analysisPlaybackUrl;
   const playBtn=$('skeletonPlay'),seek=$('skeletonSeek'),timeLabel=$('skeletonTime'),expand=$('skeletonExpand'),close=$('skeletonClose');
   const fmt=t=>Math.floor(t/60)+':'+String(Math.floor(t%60)).padStart(2,'0');
-  const resize=()=>{if(!video.videoWidth)return;const dpr=Math.min(2,window.devicePixelRatio||1),w=stage.clientWidth,h=stage.clientHeight;canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);canvas.style.width=w+'px';canvas.style.height=h+'px';};
+  const resize=()=>{
+    if(!video.videoWidth)return;
+    if(player.classList.contains('is-expanded')){
+      const ratio=video.videoWidth/video.videoHeight,availableW=window.innerWidth,availableH=window.innerHeight-64;
+      const w=Math.min(availableW,availableH*ratio),h=w/ratio;
+      stage.style.width=w+'px';stage.style.height=h+'px';stage.style.flex='0 0 auto';
+    }else{stage.style.width='100%';stage.style.height='auto';stage.style.flex='';}
+    const dpr=Math.min(2,window.devicePixelRatio||1),w=stage.clientWidth,h=stage.clientHeight;
+    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);canvas.style.width=w+'px';canvas.style.height=h+'px';
+  };
   const render=()=>{
     if(!video.videoWidth||!video.videoHeight)return;
     const dpr=Math.min(2,window.devicePixelRatio||1);if(canvas.width!==Math.round(stage.clientWidth*dpr)||canvas.height!==Math.round(stage.clientHeight*dpr))resize();
