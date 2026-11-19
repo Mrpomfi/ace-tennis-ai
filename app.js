@@ -153,14 +153,17 @@ function clearSkeletonPlayback(){
   if(playbackFrame!==null){cancelAnimationFrame(playbackFrame);playbackFrame=null;}
   if(analysisPlaybackUrl){URL.revokeObjectURL(analysisPlaybackUrl);analysisPlaybackUrl=null;}
 }
-function phaseColorAt(time,phases){
+function phaseAtTime(time,phases){
   const list=phases||[];
-  const contains=name=>list.find(p=>p.name===name&&time>=p.start&&time<=p.end);
-  if(contains('Treffpunkt-Kandidat'))return '#ff4d4d';
-  if(contains('Beschleunigung'))return '#ffad32';
-  if(contains('Ausschwung'))return '#45d483';
-  if(contains('Ausholen / Vorbereitung'))return '#55aaff';
-  return '#c7f36b';
+  for(const name of ['Treffpunkt-Kandidat','Beschleunigung','Ausschwung','Ausholen / Vorbereitung']){
+    const phase=list.find(p=>p.name===name&&time>=p.start&&time<=p.end);
+    if(phase)return phase;
+  }
+  return null;
+}
+function phaseColorAt(time,phases){
+  const phase=phaseAtTime(time,phases);
+  return phase?({'Ausholen / Vorbereitung':'#55aaff','Beschleunigung':'#ffad32','Treffpunkt-Kandidat':'#ff4d4d','Ausschwung':'#45d483'}[phase.name]):'#c7f36b';
 }
 function poseAtTime(frames,time){
   if(!frames?.length)return null;
@@ -196,7 +199,7 @@ function setupSkeletonPlayback(r,v){
   const render=()=>{
     if(!video.videoWidth||!video.videoHeight)return;
     if(canvas.width!==video.videoWidth||canvas.height!==video.videoHeight){canvas.width=video.videoWidth;canvas.height=video.videoHeight;}
-    const t=video.currentTime,pose=poseAtTime(r.frames,t),phase=(r.strokePhases?.phases||[]).find(p=>t>=p.start&&t<=p.end);
+    const t=video.currentTime,pose=poseAtTime(r.frames,t),phase=phaseAtTime(t,r.strokePhases?.phases);
     label.textContent=phase?.name||'Keine Phase zugeordnet';
     drawPlaybackPose(canvas,pose,phaseColorAt(t,r.strokePhases?.phases));
   };
