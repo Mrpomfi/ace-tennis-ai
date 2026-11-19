@@ -100,31 +100,44 @@ async function createClipFeatures(){
 }
 async function runTest(){
  if(busy)return;busy=true;run.disabled=true;progress.value=0;$('frames').innerHTML='';
- let base=null,world=null;
+ let base=null,world=null,textFeatures=null;
  try{
   say('Video-Frames werden vorbereitet …');frames=await extractFrames(24);
   await loadOrt();
+  const threshold=Number($('threshold').value),baseTimes=[],worldTimes=[],baseResults=[];
+  let baseTotal=0,worldTotal=0;
   say('CourtSide-Modell wird geladen …');
   const baseBytes=await (await fetch(BASE)).arrayBuffer();
   base=await ort.InferenceSession.create(baseBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
-  say('YOLO-World-Modell wird geladen (ca. 51 MB) …');
+  for(let i=0;i<frames.length;i++){
+   const f=frames[i],meta=makeInput(f.canvas),t0=performance.now();
+   const out=await base.run({[base.inputNames[0]]:meta.tensor});
+   const boxes=parseBase(out,meta,f.canvas,threshold);baseResults.push(boxes);
+   baseTimes.push(performance.now()-t0);baseTotal+=boxes.length;
+   progress.value=Math.round((i+1)/(frames.length*2)*100);
+   say(`CourtSide: Frame ${i+1}/${frames.length}`);
+   await wait(0);
+  }
+  base.release?.();base=null;
+  say('CourtSide abgeschlossen. YOLO-World wird geladen …');
   const worldBytes=await (await fetch(WORLD)).arrayBuffer();
   world=await ort.InferenceSession.create(worldBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
-  const textFeatures=await createClipFeatures();
-  const threshold=Number($('threshold').value),baseTimes=[],worldTimes=[];let baseTotal=0,worldTotal=0;
+  textFeatures=await createClipFeatures();
   for(let i=0;i<frames.length;i++){
-   const f=frames[i],meta=makeInput(f.canvas),b0=performance.now();
-   const bo=await base.run({[base.inputNames[0]]:meta.tensor});const bd=parseBase(bo,meta,f.canvas,threshold);baseTimes.push(performance.now()-b0);baseTotal+=bd.length;
-   const w0=performance.now();const wo=await world.run({images:meta.tensor,txt_feats:textFeatures});const wd=parseWorld(wo,meta,f.canvas,threshold);worldTimes.push(performance.now()-w0);worldTotal+=wd.length;
-   drawFrame(f,bd,wd,i);progress.value=Math.round((i+1)/frames.length*100);say(`Frame ${i+1}/${frames.length} · CourtSide: ${bd.length} · YOLO-World: ${wd.length}`);
+   const f=frames[i],meta=makeInput(f.canvas),t0=performance.now();
+   const out=await world.run({images:meta.tensor,txt_feats:textFeatures});
+   const boxes=parseWorld(out,meta,f.canvas,threshold);worldTimes.push(performance.now()-t0);worldTotal+=boxes.length;
+   drawFrame(f,baseResults[i],boxes,i);
+   progress.value=50+Math.round((i+1)/(frames.length*2)*100);
+   say(`YOLO-World: Frame ${i+1}/${frames.length} · CourtSide: ${baseResults[i].length} · YOLO-World: ${boxes.length}`);
    await wait(0);
   }
   $('baseCount').textContent=baseTotal;$('worldCount').textContent=worldTotal;
   $('baseTime').textContent=(baseTimes.reduce((a,b)=>a+b,0)/baseTimes.length).toFixed(0)+' ms';
   $('worldTime').textContent=(worldTimes.reduce((a,b)=>a+b,0)/worldTimes.length).toFixed(0)+' ms';
   say('Vergleich abgeschlossen. Bitte prüfe die Bildüberlagerungen: Blau = CourtSide, Orange = YOLO-World. Die Trefferzahl allein sagt noch nicht, welches Modell den echten Schläger gefunden hat.');
- }catch(e){console.error(e);say('Test konnte nicht abgeschlossen werden: '+(e?.message||e)+'\nBitte Screenshot dieser Meldung senden.');}
- finally{base?.release?.();world?.release?.();busy=false;run.disabled=false;}
+ }catch(e){console.error(e);say('Test konnte nicht abgeschlossen werden: '+(e?.message||e)+'\\nBitte Screenshot dieser Meldung senden.');}
+ finally{textFeatures?.dispose?.();base?.release?.();world?.release?.();busy=false;run.disabled=false;}
 }
 function drawFrame(f,a,b,i){
  const c=document.createElement('canvas');c.width=480;c.height=Math.round(480*f.canvas.height/f.canvas.width);const x=c.getContext('2d');x.drawImage(f.canvas,0,0,c.width,c.height);
