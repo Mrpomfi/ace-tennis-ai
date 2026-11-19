@@ -329,8 +329,11 @@ function createRacketVisualTracker(canvas,box){
   let template=readTemplate(cx,cy),vx=0,vy=0,lost=0;
   const currentBox=(x,y,score,source)=>({...box,x:x/width-box.w/2,y:y/height-box.h/2,score:Math.max(box.score||0,score||0),source,trackingScore:score||0});
   const reseed=(nextCanvas,nextBox)=>{
+    // A freshly detected candidate has already passed the hand/arm geometry
+    // checks. Allow it to recover the tracker even after a false lock-on to
+    // clothing or another nearby object; a distance gate here caused lock-in.
+    if(nextCanvas.width!==width||nextCanvas.height!==height)return false;
     const nx=(nextBox.x+nextBox.w/2)*nextCanvas.width,ny=(nextBox.y+nextBox.h/2)*nextCanvas.height;
-    if(Math.hypot(nx-cx,ny-cy)>Math.max(width,height)*.12)return false;
     cx=nx;cy=ny;vx=0;vy=0;template=readTemplate(cx,cy);box={...nextBox};lost=0;return true;
   };
   return {
@@ -494,7 +497,10 @@ async function startForehandAnalysis(videoId){
         if(!racketTracker){
           racketTracker=createRacketVisualTracker(canvas,detectorRacket);
           racket={...detectorRacket,source:'Modell-Starttreffer'};
-        }else if(!tracked||Math.hypot((detectorRacket.x+detectorRacket.w/2)-(tracked.x+tracked.w/2),(detectorRacket.y+detectorRacket.h/2)-(tracked.y+tracked.h/2))<.10){
+        }else{
+          // Every detector candidate reaching this point has passed the
+          // current-frame wrist/arm/direction/torso checks. Trust it as a
+          // correction even when the visual tracker drifted onto the pullover.
           if(racketTracker.reseed(canvas,detectorRacket)){racket={...detectorRacket,source:'Modell-Korrektur'};racketReanchors++;}
         }
       }
