@@ -18,9 +18,10 @@ Gesucht wird ein Modell, das einen echten Tennisschläger in privaten Trainingsv
 | Kandidat | Bekannte Fakten | Eignung für den nächsten Test |
 |---|---|---|
 | CourtSide YOLOv11n (Bestand) | 2,6 Mio. Parameter, 640×640; vom App-Projekt bereits eingebunden. Das veröffentlichte Modellprofil nennt ca. 44 % Recall auf einem kleinen Validierungssatz (66 Bilder). | Referenz/Baseline |
-| YOLO-Net (Du et al., 2026) | Tennis-spezifisches Modell mit 2,58 Mio. Parametern; im Paper 84,5 % Precision, 73,0 % Recall und 78,2 % mAP@0.5 auf dem Autoren-Datensatz. Der öffentliche Kaggle-Eintrag enthält laut Paper Validierungsbilder und Annotationen. Ein direkt ladbarer Modell-Checkpoint bzw. offizieller Export wurde bislang nicht gefunden. | Höchste Priorität zur Beschaffung/Verifikation der Gewichte; Paper-Metriken sind nicht mit den ACE-Aufnahmen gleichzusetzen |
-| YOLO-World v2 small | Open-Vocabulary-Modell; ONNX-Export ca. 48,8 MB/12,7 Mio. Parameter. Benötigt zusätzlich CLIP ViT-B/32 Text-Embeddings und NMS. Die gefundene ONNX-Variante ist AGPL-3.0 lizenziert. | Technischer Zweitkandidat, falls iPhone-Laufzeit und Lizenzbedingungen akzeptabel sind |
+| YOLO-Net (Du et al., 2026) | Tennis-spezifisches Modell mit 2,58 Mio. Parametern; im Paper 84,5 % Precision, 73,0 % Recall und 78,2 % mAP@0.5. Die Autoren stellen laut Data-Availability-Angabe nur Validierungsbilder und Annotationen öffentlich bereit; einen offiziellen Checkpoint/ONNX-Export habe ich in der Recherche nicht gefunden. | Fachlich sehr interessant, aber nicht sofort testbar; erst Autoren/Projektcode bzw. Gewichte beschaffen |
+| YOLO-World v2 small | Open-Vocabulary-Modell; ONNX-Export ca. 48,8 MB/12,7 Mio. Parameter. Benötigt CLIP ViT-B/32 Text-Embeddings und NMS. Eine öffentliche iOS/CoreML-Referenzimplementierung mit getrenntem Detektor und Text-Encoder existiert; die gefundene ONNX-Variante ist AGPL-3.0 lizenziert. | Erster praktisch testbarer Alternativkandidat: lokal mit Prompt „tennis racket“ testen; Lizenz und iPhone-Laufzeit vor Integration prüfen |
 | OWLv2 base | Zero-shot-Detektor; veröffentlichte Modellablage ca. 1,24 GB. | Für die erste iPhone-Testsituation zu groß; vorerst nicht priorisieren |
+| YOLOv11 Racket Pose (Roboflow Universe) | Tennis-Schläger-Keypoint-Modell; öffentlich angegebene 1.100 Bilder, 88,0 % Precision, 79,4 % Recall und 84,4 % mAP@0.5. Der gefundene Eintrag ist ein gehostetes Roboflow-Modell; lokal ladbare Gewichte sind noch nicht bestätigt. | Beobachtungskandidat; nur weiterverfolgen, wenn ein lokaler Export ohne Cloud-Inferenz verfügbar ist |
 | Grounding DINO | Open-set-Detektor mit Transformer-Backbone und separatem Text-Encoder. | Für lokale Echtzeit-/iPhone-Verarbeitung zunächst zu aufwendig; nicht erster Kandidat |
 
 ## Fairer Testablauf
@@ -35,12 +36,14 @@ Gesucht wird ein Modell, das einen echten Tennisschläger in privaten Trainingsv
 
 ## Vorläufige Entscheidung
 
-YOLO-Net ist wegen des tennis-spezifischen Trainings und der kleinen Parameterzahl der interessanteste Kandidat. Die publizierten Kennzahlen sind jedoch keine Garantie für die Wohnzimmer-/Trainingsaufnahmen in ACE. Der nächste technische Schritt ist, einen offiziellen bzw. reproduzierbaren Checkpoint zu finden. Falls keiner verfügbar ist, wird YOLO-World small als nächster ausführbarer Kandidat geprüft – unter Beachtung der AGPL-Lizenz und der zusätzlichen CLIP-Komponente.
+YOLO-Net bleibt fachlich interessant, ist aber aktuell nicht direkt testbar: Die im Paper genannte Kaggle-Veröffentlichung umfasst ausdrücklich nur Validierungsbilder und Annotationen, keinen Modell-Checkpoint. Daher wird YOLO-World v2 small als erster praktisch ausführbarer Alternativkandidat priorisiert. Eine vorhandene iOS/CoreML-Referenz zeigt, dass Detektor und CLIP-Text-Encoder lokal auf iOS aufgeteilt werden können; das ist ein technischer Startpunkt, aber noch kein Leistungsnachweis auf ACE-Videos. Zusätzlich wird geprüft, ob das Roboflow-Racket-Pose-Modell lokal exportierbar ist. Alle Kandidaten werden vor einer App-Integration mit denselben ACE-Frames verglichen.
 
 ## Quellen
 
 - Du et al. (2026), *YOLO-Net: A lightweight edge-enhanced detection model for small-object recognition in tennis match scenarios*, PLOS ONE: https://doi.org/10.1371/journal.pone.0335558
-- Autoren-Datensatz (Validierungsbilder und Annotationen laut Paper): https://www.kaggle.com/datasets/taowang1123/yolo-net
+- Autoren-Datensatz (laut Paper nur Validierungsbilder und Annotationen): https://www.kaggle.com/datasets/taowang1123/yolo-net
+- YOLO-World iOS/CoreML-Referenz (lokaler Detektor plus CLIP-Text-Encoder): https://github.com/S2dentik/yolo-world-ios
+- Roboflow Tennis-Racket-Pose-Modell (Keypoint-Detektion, lokale Exportierbarkeit offen): https://universe.roboflow.com/mylab-4b02x/tennis-racket-pose
 - YOLO-World v2 ONNX-Modellkarte und Input-Schema: https://huggingface.co/Instemic/yolo-world-onnx
 - OWLv2 Modellkarte: https://huggingface.co/google/owlv2-base-patch16
 - Grounding DINO: https://github.com/IDEA-Research/GroundingDINO
