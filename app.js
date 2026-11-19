@@ -624,6 +624,12 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
   if(shoulders.length<2||hips.length<2)return null;
   const avg=items=>({x:items.reduce((n,p)=>n+p.x,0)/items.length,y:items.reduce((n,p)=>n+p.y,0)/items.length});
   const torso=Math.max(.06,Math.hypot(avg(shoulders).x-avg(hips).x,avg(shoulders).y-avg(hips).y));
+  // Never initialize tracking from a low-confidence detection on the player's
+  // shirt or jacket. Require the candidate centre to leave the torso region.
+  const torsoLeft=Math.min(...[...shoulders,...hips].map(p=>p.x))-.18*torso;
+  const torsoRight=Math.max(...[...shoulders,...hips].map(p=>p.x))+.18*torso;
+  const torsoTop=Math.min(...shoulders.map(p=>p.y))-.12*torso;
+  const torsoBottom=Math.max(...hips.map(p=>p.y))+.12*torso;
   const arms=[[13,15],[14,16]].map(([elbowId,wristId])=>({elbow:point(elbowId),wrist:point(wristId)})).filter(a=>a.elbow&&a.wrist);
   if(!arms.length)return null;
   const pointRectDistance=(p,l,t,r,b)=>{
@@ -632,7 +638,7 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
   };
   let selected=null,bestRank=-Infinity,bestNearHand=Infinity,bestNearArm=Infinity;
   let nearestCandidate=null,nearestDistance=Infinity,checked=0,nearHand=0,nearArm=0;
-  let rejectedCourtLine=0,rejectedTooClose=0,rejectedTooFar=0,rejectedDirection=0;
+  let rejectedCourtLine=0,rejectedTooClose=0,rejectedTooFar=0,rejectedDirection=0,rejectedTorso=0;
   for(const candidate of candidates){
     checked++;
     const l=candidate.x,t=candidate.y,r=l+candidate.w,b=t+candidate.h;
@@ -644,6 +650,11 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
     const aspect=longSide/Math.max(1e-6,shortSide);
     if(aspect>9||shortSide<torso*.035||candidate.w*candidate.h<torso*torso*.002){
       rejectedCourtLine++;
+      continue;
+    }
+    const centerX=(l+r)/2,centerY=(t+b)/2;
+    if(centerX>=torsoLeft&&centerX<=torsoRight&&centerY>=torsoTop&&centerY<=torsoBottom){
+      rejectedTorso++;
       continue;
     }
     let bestForCandidate=null;
@@ -698,8 +709,8 @@ function selectRacketCandidate(candidates,landmarks,diagnostic){
     bestHandDistance:Number.isFinite(bestNearHand)?Number(bestNearHand.toFixed(3)):null,
     bestArmDistance:Number.isFinite(bestNearArm)?Number(bestNearArm.toFixed(3)):null,
     nearestCandidate,selected:!!selected,
-    rejectedCourtLine,rejectedTooClose,rejectedTooFar,rejectedDirection,
-    rule:'Schlägerkopf mit Mindestabstand zum Handgelenk gesucht; Armrichtung und Linienform geprüft'
+    rejectedCourtLine,rejectedTooClose,rejectedTooFar,rejectedDirection,rejectedTorso,
+    rule:'Schlägerkopf außerhalb des Rumpfes mit Mindestabstand zum Handgelenk gesucht; Armrichtung und Linienform geprüft'
   };
   return selected;
 }
@@ -800,7 +811,7 @@ function renderAnalysisResult(r,v){
   const phases=(r.phases||[]).map(p=>'<div class="phase"><b>'+p.name+'</b><small>Linker Ellenbogen: '+(p.leftElbow?.avg!=null?p.leftElbow.avg+'°':'—')+' · Rechter Ellenbogen: '+(p.rightElbow?.avg!=null?p.rightElbow.avg+'°':'—')+'</small><small>Linkes Knie: '+(p.leftKnee?.avg!=null?p.leftKnee.avg+'°':'—')+' · Rechtes Knie: '+(p.rightKnee?.avg!=null?p.rightKnee.avg+'°':'—')+'</small></div>').join('');
   const coverageText=r.coverage>=80?'Die Körperpose wurde in einem großen Teil der Stichproben erkannt.':r.coverage>=50?'Die Erkennung war wechselhaft. Einzelne Messwerte können fehlen.':'Die Erkennung war zu unsicher für eine verlässliche Bewegungsbeobachtung.';
   const stroke=r.strokePhases;
-  const rd=r.racketDiagSummary||{},racketMarkup='<h3>Schläger-Erkennung (Diagnose)</h3><p class="tiny">'+(rd.modelLoaded?'Modell geladen · ':'Modell nicht geladen · ')+(r.racketChecked?(r.racketSamples+' von '+r.racketChecked+' Bildern mit Erkennung ('+Math.round(r.racketSamples/r.racketChecked*100)+'%).'):'Keine Modell-Inferenz durchgeführt.')+'</p><details class="diagnostic"><summary>Technische Schläger-Diagnose anzeigen</summary><p class="tiny">Modell-Ausgabe: '+esc(rd.outputShape||'—')+' · Format: '+esc(rd.format||'—')+'</p><p class="tiny">Höchster Schläger-Score (Klasse 0): '+(Number(rd.maxRacketScore||0)*100).toFixed(1)+'% · höchste andere Klasse: '+(Number(rd.maxOtherScore||0)*100).toFixed(1)+'% · höchster Score insgesamt: '+(Number(rd.maxAnyScore||0)*100).toFixed(1)+'%</p><p class="tiny">Gültige Modelltreffer: '+(rd.validRows||0)+' · Leere NMS-Plätze (Padding): '+(rd.paddedRows||0)+'</p><p class="tiny">Klassenverteilung (nur gültige Treffer): '+esc(Object.entries(rd.classCounts||{}).map(([k,v])=>(RACKET_CLASS_NAMES[k]||'Klasse '+k)+': '+v).join(' · ')||'Keine gültigen Treffer')+'</p><p class="tiny">Top-Ausgaben: '+esc((rd.topRows||[]).map(x=>(RACKET_CLASS_NAMES[x.classId]||'Klasse '+x.classId)+' / '+(Number(x.score)*100).toFixed(1)+'% (Boxmitte '+Number(x.boxCenterX||0).toFixed(0)+','+Number(x.boxCenterY||0).toFixed(0)+')').join(' · ')||'—')+'</p><p class="tiny">Nächster Kandidat zur Hand: '+(rd.selectionNearestCandidate?('Mitte '+Math.round((rd.selectionNearestCandidate.x+rd.selectionNearestCandidate.w/2)*100)+'% / '+Math.round((rd.selectionNearestCandidate.y+rd.selectionNearestCandidate.h/2)*100)+'% des Bildes · Box '+Math.round(rd.selectionNearestCandidate.w*100)+'×'+Math.round(rd.selectionNearestCandidate.h*100)+'% · Score '+(rd.selectionNearestCandidate.score*100).toFixed(1)+'% · Handabstand '+rd.selectionNearestCandidate.handDistance+' · Armabstand '+rd.selectionNearestCandidate.armDistance):'kein Kandidat')+'</p><p class="tiny">Kandidaten über 1%: '+(rd.above01||0)+' · über 5%: '+(rd.above05||0)+' · über 15%: '+(rd.above15||0)+'</p><p class="tiny">Hand-Zuordnung: '+(rd.selectionChecked||0)+' Kandidaten geprüft · '+(rd.selectionNearHand||0)+' nahe Hand · '+(rd.selectionNearArm||0)+' nahe Arm · kleinster Handabstand: '+(rd.selectionBestHandDistance??'—')+' · kleinster Armabstand: '+(rd.selectionBestArmDistance??'—')+'</p><p class="tiny">Visuelle Verfolgung: '+(rd.trackingStarted?'gestartet':'kein Starttreffer')+' · '+(rd.trackingSamples||0)+' Bilder per Tracker verfolgt · '+(rd.detectorReanchors||0)+' Modell-Korrekturen</p><p class="tiny">Technische Fehler: '+(rd.errors||0)+(rd.errorSamples?.length?' · '+rd.errorSamples.map(esc).join(' / '):'')+'</p><p class="tiny">Die Diagnosewerte werden nur lokal im Analysebericht gespeichert.</p></details>';
+  const rd=r.racketDiagSummary||{},racketMarkup='<h3>Schläger-Erkennung (Diagnose)</h3><p class="tiny">'+(rd.modelLoaded?'Modell geladen · ':'Modell nicht geladen · ')+(r.racketChecked?(r.racketSamples+' von '+(r.sampled||r.racketChecked)+' analysierten Bildern mit Schlägerposition ('+Math.round(r.racketSamples/Math.max(1,r.sampled||r.racketChecked)*100)+'%).'):'Keine Modell-Inferenz durchgeführt.')+'</p><details class="diagnostic"><summary>Technische Schläger-Diagnose anzeigen</summary><p class="tiny">Modell-Ausgabe: '+esc(rd.outputShape||'—')+' · Format: '+esc(rd.format||'—')+'</p><p class="tiny">Höchster Schläger-Score (Klasse 0): '+(Number(rd.maxRacketScore||0)*100).toFixed(1)+'% · höchste andere Klasse: '+(Number(rd.maxOtherScore||0)*100).toFixed(1)+'% · höchster Score insgesamt: '+(Number(rd.maxAnyScore||0)*100).toFixed(1)+'%</p><p class="tiny">Gültige Modelltreffer: '+(rd.validRows||0)+' · Leere NMS-Plätze (Padding): '+(rd.paddedRows||0)+'</p><p class="tiny">Klassenverteilung (nur gültige Treffer): '+esc(Object.entries(rd.classCounts||{}).map(([k,v])=>(RACKET_CLASS_NAMES[k]||'Klasse '+k)+': '+v).join(' · ')||'Keine gültigen Treffer')+'</p><p class="tiny">Top-Ausgaben: '+esc((rd.topRows||[]).map(x=>(RACKET_CLASS_NAMES[x.classId]||'Klasse '+x.classId)+' / '+(Number(x.score)*100).toFixed(1)+'% (Boxmitte '+Number(x.boxCenterX||0).toFixed(0)+','+Number(x.boxCenterY||0).toFixed(0)+')').join(' · ')||'—')+'</p><p class="tiny">Nächster Kandidat zur Hand: '+(rd.selectionNearestCandidate?('Mitte '+Math.round((rd.selectionNearestCandidate.x+rd.selectionNearestCandidate.w/2)*100)+'% / '+Math.round((rd.selectionNearestCandidate.y+rd.selectionNearestCandidate.h/2)*100)+'% des Bildes · Box '+Math.round(rd.selectionNearestCandidate.w*100)+'×'+Math.round(rd.selectionNearestCandidate.h*100)+'% · Score '+(rd.selectionNearestCandidate.score*100).toFixed(1)+'% · Handabstand '+rd.selectionNearestCandidate.handDistance+' · Armabstand '+rd.selectionNearestCandidate.armDistance):'kein Kandidat')+'</p><p class="tiny">Kandidaten über 1%: '+(rd.above01||0)+' · über 5%: '+(rd.above05||0)+' · über 15%: '+(rd.above15||0)+'</p><p class="tiny">Hand-Zuordnung: '+(rd.selectionChecked||0)+' Kandidaten geprüft · '+(rd.selectionNearHand||0)+' nahe Hand · '+(rd.selectionNearArm||0)+' nahe Arm · kleinster Handabstand: '+(rd.selectionBestHandDistance??'—')+' · kleinster Armabstand: '+(rd.selectionBestArmDistance??'—')+'</p><p class="tiny">Visuelle Verfolgung: '+(rd.trackingStarted?'gestartet':'kein Starttreffer')+' · '+(rd.trackingSamples||0)+' Bilder per Tracker verfolgt · '+(rd.detectorReanchors||0)+' Modell-Korrekturen</p><p class="tiny">Technische Fehler: '+(rd.errors||0)+(rd.errorSamples?.length?' · '+rd.errorSamples.map(esc).join(' / '):'')+'</p><p class="tiny">Die Diagnosewerte werden nur lokal im Analysebericht gespeichert.</p></details>';
   const strokeMarkup=stroke?.phases?.length?'<div class="stroke-phase-list">'+stroke.phases.map(p=>'<div class="stroke-phase"><b>'+esc(p.name)+'</b><small>'+p.start.toFixed(2)+'–'+p.end.toFixed(2)+' s</small></div>').join('')+'</div>':'<p class="tiny">'+esc(stroke?.reason||'Keine zuverlässige Phasenschätzung möglich.')+'</p>';
   const sideLabel=stroke?.side==='left'?'die linke Seite (größere erkannte Handgelenkbewegung)':stroke?.side==='right'?'die rechte Seite (größere erkannte Handgelenkbewegung)':'keine Seite';
   const tips=[];if(r.coverage<80)tips.push('Filme bei gutem Licht und halte Kopf, Füße und beide Arme während des gesamten Schlages im Bild.');if(r.angle==='unknown')tips.push('Wähle beim nächsten Video die Kameraperspektive aus.');tips.push('Nutze möglichst dieselbe Kameraposition und denselben Abstand, wenn du Fortschritte vergleichen möchtest.');
