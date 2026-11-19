@@ -205,19 +205,25 @@ async function detectRacket(detector,canvas,landmarks){
   const shoulder={x:(landmarks[11].x+landmarks[12].x)*.5*width,y:(landmarks[11].y+landmarks[12].y)*.5*height};
   const hip={x:(landmarks[23].x+landmarks[24].x)*.5*width,y:(landmarks[23].y+landmarks[24].y)*.5*height};
   const torso=Math.max(24,Math.hypot(shoulder.x-hip.x,shoulder.y-hip.y));
-  const arms=[[13,15,'links'],[14,16,'rechts']].map(([elbowId,wristId,side])=>{
+  const arms=[[13,15,'links'],[14,16,'rechts']].flatMap(([elbowId,wristId,side])=>{
     const elbow=point(elbowId),wrist=point(wristId);
-    if(!elbow||!wrist)return null;
+    if(!elbow||!wrist)return [];
     const ex=elbow.x*width,ey=elbow.y*height,wx=wrist.x*width,wy=wrist.y*height;
     const dx=wx-ex,dy=wy-ey,length=Math.hypot(dx,dy);
-    if(length<4)return null;
-    // Include more of the racket head beyond the wrist, not just the hand.
-    const sideLength=torso*3.2,cx=wx+dx/length*torso*.5,cy=wy+dy/length*torso*.5;
-    const sx=Math.max(0,Math.min(width-sideLength,cx-sideLength/2));
-    const sy=Math.max(0,Math.min(height-sideLength,cy-sideLength/2));
-    const sw=Math.max(1,Math.min(sideLength,width-sx)),sh=Math.max(1,Math.min(sideLength,height-sy));
-    return {side,sx,sy,sw,sh};
-  }).filter(Boolean);
+    if(length<4)return [];
+    // Multi-scale crops: a tight, upscaled hand/racket crop plus the wider
+    // context crop. The original full-frame pass remains the first inference.
+    return [
+      {factor:2.0,offset:0},
+      {factor:3.2,offset:.5}
+    ].map(({factor,offset})=>{
+      const sideLength=torso*factor,cx=wx+dx/length*torso*offset,cy=wy+dy/length*torso*offset;
+      const sx=Math.max(0,Math.min(width-sideLength,cx-sideLength/2));
+      const sy=Math.max(0,Math.min(height-sideLength,cy-sideLength/2));
+      const sw=Math.max(1,Math.min(sideLength,width-sx)),sh=Math.max(1,Math.min(sideLength,height-sy));
+      return {side:side+'-'+factor.toFixed(1)+'x',sx,sy,sw,sh};
+    });
+  });
   if(!arms.length)return {box:null,candidates:fullCandidates,diagnostic:{
     ...fullDiagnostic,inferenceModes:['Ganzbild'],cropInferenceCount:0,cropSides:[],
     errors:['Keine sichere Hand-/Unterarmposition für die lokale Suche']
