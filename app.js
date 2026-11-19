@@ -49,7 +49,9 @@ async function loadOnnxRuntime(){
     }
     ort=await ortLoadingPromise;
   }
-  ort.env.wasm.wasmPaths='./vendor/onnxruntime-web/';
+  // GitHub Pages may serve .mjs with a MIME type Safari rejects for dynamic module imports.
+  // Serve the identical ONNX Runtime module through a .js URL instead.
+  ort.env.wasm.wasmPaths={mjs:'./vendor/onnxruntime-web/ort-wasm-simd-threaded.js',wasm:'./vendor/onnxruntime-web/ort-wasm-simd-threaded.wasm'};
   ort.env.wasm.numThreads=1;
   return ort;
 }
