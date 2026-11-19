@@ -47,3 +47,11 @@ YOLO-Net bleibt fachlich interessant, ist aber aktuell nicht direkt testbar: Die
 - YOLO-World v2 ONNX-Modellkarte und Input-Schema: https://huggingface.co/Instemic/yolo-world-onnx
 - OWLv2 Modellkarte: https://huggingface.co/google/owlv2-base-patch16
 - Grounding DINO: https://github.com/IDEA-Research/GroundingDINO
+
+## Browser-Prototyp (isolierter Test)
+
+Unter `experiments/racket-model-benchmark/index.html` liegt ein erster Browser-Prototyp. Er nimmt ein Video über die Dateiauswahl entgegen und verarbeitet die Frames lokal. Die Seite lädt CourtSide aus dem Repository, YOLO-World v2 Small von Hugging Face und den CLIP-Textencoder über Transformers.js. Die Videos selbst werden nicht an einen Server übertragen.
+
+**Wichtiger Status:** Der Prototyp ist noch nicht auf einem iPhone verifiziert. Insbesondere der CLIP-Textencoder kann beim ersten Laden viel Speicher und Datenvolumen benötigen. Er muss vor einem belastbaren Vergleich auf dem Zielgerät getestet werden. Die dargestellten Trefferzahlen sind Rohdetektionen; Precision/Recall erfordern zusätzlich manuell markierte Ground-Truth-Boxen.
+
+Die Branch-Seite wird nicht automatisch unter GitHub Pages veröffentlicht, solange Pages auf den Hauptzweig zeigt. Die Dateien sind daher zunächst nur im Testzweig vorhanden; die ACE-Hauptapp bleibt unverändert.
