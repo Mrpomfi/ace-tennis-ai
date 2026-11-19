@@ -16,18 +16,36 @@ input.addEventListener('change',()=>{
 $('threshold').addEventListener('input',e=>$('thresholdValue').textContent=Number(e.target.value).toFixed(2).replace('.',','));
 function say(s){status.textContent=s}
 function wait(ms){return new Promise(r=>setTimeout(r,ms))}
+async function seekVideo(t){
+  if(Math.abs(video.currentTime-t)<0.015 && video.readyState>=2)return;
+  await new Promise((resolve,reject)=>{
+    let timer;
+    const cleanup=()=>{video.removeEventListener('seeked',done);video.removeEventListener('error',failed);clearTimeout(timer)};
+    const done=()=>{cleanup();resolve()};
+    const failed=()=>{cleanup();reject(new Error('Video-Frame konnte nicht angesprungen werden.'))};
+    video.addEventListener('seeked',done,{once:true});
+    video.addEventListener('error',failed,{once:true});
+    timer=setTimeout(()=>{cleanup();reject(new Error('Zeitüberschreitung beim Lesen eines Video-Frames.'))},5000);
+    video.currentTime=t;
+  });
+}
 async function extractFrames(count=24){
-  const old=video.currentTime, duration=video.duration, canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
+  const old=video.currentTime,duration=video.duration,canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
   canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+  if(!canvas.width||!canvas.height||!Number.isFinite(duration))throw new Error('Video ist noch nicht vollständig bereit.');
   const out=[];
-  for(let i=0;i<count;i++){
-    const t=duration*(i/(count-1||1));
-    await new Promise((resolve,reject)=>{const done=()=>{video.removeEventListener('seeked',done);resolve()};video.addEventListener('seeked',done,{once:true});video.currentTime=t;setTimeout(()=>{video.removeEventListener('seeked',done);resolve()},1200)});
-    ctx.drawImage(video,0,0,canvas.width,canvas.height);
-    const c=document.createElement('canvas');c.width=canvas.width;c.height=canvas.height;c.getContext('2d').drawImage(canvas,0,0);
-    out.push({time:t,canvas:c});
+  try{
+    for(let i=0;i<count;i++){
+      const t=duration*(i/(count-1||1));
+      await seekVideo(t);
+      ctx.drawImage(video,0,0,canvas.width,canvas.height);
+      const c=document.createElement('canvas');c.width=canvas.width;c.height=canvas.height;c.getContext('2d').drawImage(canvas,0,0);
+      out.push({time:t,canvas:c});
+    }
+  }finally{
+    try{await seekVideo(old)}catch{}
   }
-  video.currentTime=old;return out;
+  return out;
 }
 function makeInput(canvas){
   const size=640, scale=Math.min(size/canvas.width,size/canvas.height),sw=Math.round(canvas.width*scale),sh=Math.round(canvas.height*scale),ox=(size-sw)/2,oy=(size-sh)/2;
@@ -54,9 +72,14 @@ function parseBase(out,meta,canvas,threshold){
 function parseWorld(out,meta,canvas,threshold){
  const t=out[Object.keys(out)[0]],v=t.data,d=t.dims,boxes=[];
  if(d.length!==3)throw Error('Unbekanntes YOLO-World-Ausgabeformat: '+d.join('×'));
- const channelsFirst=d[1]===5,channels=channelsFirst?d[1]:d[2],n=channelsFirst?d[2]:d[1];
+ const channelsFirst=d[1]<d[2],channels=channelsFirst?d[1]:d[2],n=channelsFirst?d[2]:d[1];
  if(channels<5)throw Error('YOLO-World-Ausgabe enthält keine Klassenwerte.');
- for(let i=0;i<n;i++){const get=c=>channelsFirst?v[c*n+i]:v[i*channels+c];const score=sigmoid(get(4));if(score<threshold)continue;const cx=get(0),cy=get(1),w=get(2),h=get(3),b=mapBox(cx-w/2,cy-h/2,cx+w/2,cy+h/2,score,meta,canvas);if(b)boxes.push(b)}
+ for(let i=0;i<n;i++){
+  const get=c=>channelsFirst?v[c*n+i]:v[i*channels+c];
+  let score=0;for(let c=4;c<channels;c++)score=Math.max(score,sigmoid(get(c)));
+  if(score<threshold)continue;
+  const cx=get(0),cy=get(1),w=get(2),h=get(3),b=mapBox(cx-w/2,cy-h/2,cx+w/2,cy+h/2,score,meta,canvas);if(b)boxes.push(b);
+ }
  return nms(boxes);
 }
 async function loadOrt(){
@@ -77,15 +100,16 @@ async function createClipFeatures(){
 }
 async function runTest(){
  if(busy)return;busy=true;run.disabled=true;progress.value=0;$('frames').innerHTML='';
+ let base=null,world=null;
  try{
   say('Video-Frames werden vorbereitet …');frames=await extractFrames(24);
   await loadOrt();
   say('CourtSide-Modell wird geladen …');
   const baseBytes=await (await fetch(BASE)).arrayBuffer();
-  const base=await ort.InferenceSession.create(baseBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
+  base=await ort.InferenceSession.create(baseBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
   say('YOLO-World-Modell wird geladen (ca. 51 MB) …');
   const worldBytes=await (await fetch(WORLD)).arrayBuffer();
-  const world=await ort.InferenceSession.create(worldBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
+  world=await ort.InferenceSession.create(worldBytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
   const textFeatures=await createClipFeatures();
   const threshold=Number($('threshold').value),baseTimes=[],worldTimes=[];let baseTotal=0,worldTotal=0;
   for(let i=0;i<frames.length;i++){
@@ -99,9 +123,8 @@ async function runTest(){
   $('baseTime').textContent=(baseTimes.reduce((a,b)=>a+b,0)/baseTimes.length).toFixed(0)+' ms';
   $('worldTime').textContent=(worldTimes.reduce((a,b)=>a+b,0)/worldTimes.length).toFixed(0)+' ms';
   say('Vergleich abgeschlossen. Bitte prüfe die Bildüberlagerungen: Blau = CourtSide, Orange = YOLO-World. Die Trefferzahl allein sagt noch nicht, welches Modell den echten Schläger gefunden hat.');
-  base.release?.();world.release?.();
  }catch(e){console.error(e);say('Test konnte nicht abgeschlossen werden: '+(e?.message||e)+'\nBitte Screenshot dieser Meldung senden.');}
- finally{busy=false;run.disabled=false;}
+ finally{base?.release?.();world?.release?.();busy=false;run.disabled=false;}
 }
 function drawFrame(f,a,b,i){
  const c=document.createElement('canvas');c.width=480;c.height=Math.round(480*f.canvas.height/f.canvas.width);const x=c.getContext('2d');x.drawImage(f.canvas,0,0,c.width,c.height);
