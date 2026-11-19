@@ -125,7 +125,10 @@ async function getRacketTask(){
         if(score>=.01)diag.above01++;
         if(score>=.05)diag.above05++;
         if(score>=.15)diag.above15++;
-        if(score<.05)return;
+        // Das Modell erkennt den echten Schläger in den Testframes oft nur mit 1–5 %.
+        // Niedrige Scores werden aufgenommen; die anschließende Hand-/Arm-Geometrie
+        // filtert räumlich unplausible Treffer (z. B. Spielzeug am unteren Bildrand).
+        if(score<.01)return;
         const box=mapBox(x1,y1,x2,y2,score,0);
         if(box)candidates.push(box);
       };
