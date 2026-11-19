@@ -182,10 +182,68 @@ async function getRacketTask(){
     async close(){await session.release();}
   };
 }
-async function detectRacket(detector,canvas){
-  if(!detector)return {box:null,diagnostic:{error:'Modell nicht geladen'}};
-  try{return await detector.detect(canvas);}
-  catch(error){return {box:null,diagnostic:{error:String(error?.message||error)}};}
+async function detectRacket(detector,canvas,landmarks){
+  if(!detector)return {box:null,candidates:[],diagnostic:{error:'Modell nicht geladen'}};
+  if(!landmarks)return {box:null,candidates:[],diagnostic:{error:'Körperpose nicht erkannt'}};
+  const width=canvas.width,height=canvas.height;
+  const point=i=>landmarks[i]&&(landmarks[i].visibility??1)>.4?landmarks[i]:null;
+  const torsoPoints=[point(11),point(12),point(23),point(24)].filter(Boolean);
+  if(torsoPoints.length<4)return {box:null,candidates:[],diagnostic:{error:'Rumpf für Schläger-Suchfenster nicht sicher erkannt'}};
+  const shoulder={x:(landmarks[11].x+landmarks[12].x)*.5*width,y:(landmarks[11].y+landmarks[12].y)*.5*height};
+  const hip={x:(landmarks[23].x+landmarks[24].x)*.5*width,y:(landmarks[23].y+landmarks[24].y)*.5*height};
+  const torso=Math.max(24,Math.hypot(shoulder.x-hip.x,shoulder.y-hip.y));
+  const arms=[[13,15,'links'],[14,16,'rechts']].map(([elbowId,wristId,side])=>{
+    const elbow=point(elbowId),wrist=point(wristId);
+    if(!elbow||!wrist)return null;
+    const ex=elbow.x*width,ey=elbow.y*height,wx=wrist.x*width,wy=wrist.y*height;
+    const dx=wx-ex,dy=wy-ey,length=Math.hypot(dx,dy);
+    if(length<4)return null;
+    // The racket normally continues outwards from the forearm beyond the wrist.
+    const sideLength=torso*2.5,cx=wx+dx/length*torso*.32,cy=wy+dy/length*torso*.32;
+    const sx=Math.max(0,Math.min(width-sideLength,cx-sideLength/2));
+    const sy=Math.max(0,Math.min(height-sideLength,cy-sideLength/2));
+    const sw=Math.max(1,Math.min(sideLength,width-sx)),sh=Math.max(1,Math.min(sideLength,height-sy));
+    return {side,sx,sy,sw,sh};
+  }).filter(Boolean);
+  if(!arms.length)return {box:null,candidates:[],diagnostic:{error:'Keine sichere Hand-/Unterarmposition für die lokale Suche'}};
+  const candidates=[],diagnostics=[];
+  for(const region of arms){
+    const crop=document.createElement('canvas');
+    crop.width=Math.max(1,Math.round(region.sw));crop.height=Math.max(1,Math.round(region.sh));
+    const context=crop.getContext('2d',{willReadFrequently:true});
+    context.drawImage(canvas,region.sx,region.sy,region.sw,region.sh,0,0,crop.width,crop.height);
+    const result=await detector.detect(crop),diag=result.diagnostic||{};
+    diagnostics.push({...diag,cropSide:region.side});
+    for(const candidate of result.candidates||[]){
+      candidates.push({
+        ...candidate,
+        x:(region.sx+candidate.x*region.sw)/width,
+        y:(region.sy+candidate.y*region.sh)/height,
+        w:candidate.w*region.sw/width,
+        h:candidate.h*region.sh/height,
+        cropSide:region.side
+      });
+    }
+  }
+  const diagnostic={
+    outputShape:diagnostics.find(d=>d.outputShape)?.outputShape||'—',
+    format:diagnostics.find(d=>d.format)?.format||'—',
+    maxRacketScore:Math.max(0,...diagnostics.map(d=>d.maxRacketScore||0)),
+    maxOtherScore:Math.max(0,...diagnostics.map(d=>d.maxOtherScore||0)),
+    maxAnyScore:Math.max(0,...diagnostics.map(d=>d.maxAnyScore||0)),
+    validRows:diagnostics.reduce((n,d)=>n+(d.validRows||0),0),
+    paddedRows:diagnostics.reduce((n,d)=>n+(d.paddedRows||0),0),
+    classCounts:diagnostics.reduce((acc,d)=>{for(const [k,v] of Object.entries(d.classCounts||{}))acc[k]=(acc[k]||0)+v;return acc;},{}),
+    topRows:diagnostics.flatMap(d=>(d.topRows||[]).map(row=>({...row,cropSide:d.cropSide}))).sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,5),
+    above01:diagnostics.reduce((n,d)=>n+(d.above01||0),0),
+    above05:diagnostics.reduce((n,d)=>n+(d.above05||0),0),
+    above15:diagnostics.reduce((n,d)=>n+(d.above15||0),0),
+    cropInferenceCount:diagnostics.length,
+    cropSides:diagnostics.map(d=>d.cropSide),
+    errors:diagnostics.filter(d=>d.error).map(d=>d.error)
+  };
+  const best=candidates.reduce((chosen,candidate)=>!chosen||candidate.score>chosen.score?candidate:chosen,null);
+  return {box:best,candidates,diagnostic};
 }
 function angle3(a,b,c){const ab=[a.x-b.x,a.y-b.y],cb=[c.x-b.x,c.y-b.y];const dot=ab[0]*cb[0]+ab[1]*cb[1],mag=Math.hypot(...ab)*Math.hypot(...cb);if(!mag)return null;return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI)}
 const POSE_LINKS=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28]];
@@ -296,7 +354,7 @@ async function startForehandAnalysis(videoId){
       status.textContent='Vorhand wird untersucht: Bild '+(i+1)+' von '+times.length+' …';
       const seeked=waitEvent(videoEl,'seeked');videoEl.currentTime=times[i];await seeked;
       const scale=Math.min(1,640/(videoEl.videoWidth||640));canvas.width=Math.round((videoEl.videoWidth||640)*scale);canvas.height=Math.round((videoEl.videoHeight||360)*scale);ctx.drawImage(videoEl,0,0,canvas.width,canvas.height);
-      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];const racketResult=racketTask?await detectRacket(racketTask,canvas):{box:null,candidates:[],diagnostic:{error:'Modell nicht geladen'}};const racketDiagnostic=racketResult.diagnostic;if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null,racket:null,racketDiagnostic};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;
+      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm){const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null,racket:null,racketDiagnostic:{error:'Körperpose nicht erkannt'}};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;const racketResult=racketTask?await detectRacket(racketTask,canvas,lm):{box:null,candidates:[],diagnostic:{error:'Modell nicht geladen'}};const racketDiagnostic=racketResult.diagnostic;
       const visible=lm.filter(p=>(p.visibility??1)>.4).length;
       const racket=selectRacketCandidate(racketResult.candidates||[],lm,racketDiagnostic),racketAccepted=!!racket;if(racketAccepted)racketSamples++;
       const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:lm.map(p=>({x:p.x,y:p.y,visibility:p.visibility??1})),racket,racketDiagnostic};
