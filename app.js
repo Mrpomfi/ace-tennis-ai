@@ -478,23 +478,28 @@ async function startForehandAnalysis(videoId){
       status.textContent='Vorhand wird untersucht: Bild '+(i+1)+' von '+times.length+' …';
       const seeked=waitEvent(videoEl,'seeked');videoEl.currentTime=times[i];await seeked;
       const scale=Math.min(1,640/(videoEl.videoWidth||640));canvas.width=Math.round((videoEl.videoWidth||640)*scale);canvas.height=Math.round((videoEl.videoHeight||360)*scale);ctx.drawImage(videoEl,0,0,canvas.width,canvas.height);
-      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm){const tracked=racketTracker?.track(canvas)||null;const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null,racket:tracked,racketCandidates:[],racketDiagnostic:{error:'Körperpose nicht erkannt'}};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;const racketResult=racketTask&&i%2===0?await detectRacket(racketTask,canvas,lm):{box:null,candidates:[],diagnostic:racketTask?null:{error:'Modell nicht geladen'}};const racketDiagnostic=racketResult.diagnostic;
+      const res=task.detectForVideo(canvas,Math.round(times[i]*1000)+i),lm=res.landmarks?.[0];if(!lm){racketTracker=null;const missing={time:times[i],visible:0,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:null,racket:null,racketCandidates:[],racketDiagnostic:{error:'Körperpose nicht erkannt'}};frames.push(missing);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(missing);continue;}detected++;const racketResult=racketTask&&i%2===0?await detectRacket(racketTask,canvas,lm):{box:null,candidates:[],diagnostic:racketTask?null:{error:'Modell nicht geladen'}};const racketDiagnostic=racketResult.diagnostic;
       const visible=lm.filter(p=>(p.visibility??1)>.4).length;
       const detectorRacket=selectRacketCandidate(racketResult.candidates||[],lm,racketDiagnostic);
       let racket=null;
-      if(!racketTracker&&detectorRacket){
-        racketTracker=createRacketVisualTracker(canvas,detectorRacket);
-        racket={...detectorRacket,source:'Modell-Starttreffer'};
-      }else if(racketTracker){
-        const tracked=racketTracker.track(canvas);
-        if(detectorRacket){
-          if(!tracked||Math.hypot((detectorRacket.x+detectorRacket.w/2)-(tracked.x+tracked.w/2),(detectorRacket.y+detectorRacket.h/2)-(tracked.y+tracked.h/2))<.10){
-            if(racketTracker.reseed(canvas,detectorRacket)){racket={...detectorRacket,source:'Modell-Korrektur'};racketReanchors++;}
-          }
-        }
-        if(!racket&&tracked)racket=tracked;
-        if(racket?.source==='Bildverfolgung')racketTrackingSamples++;
+      let tracked=null;
+      if(racketTracker){
+        const rawTracked=racketTracker.track(canvas);
+        // A visual match is only a hypothesis: re-check it against the current
+        // pose, torso exclusion, wrist distance and forearm direction every frame.
+        tracked=rawTracked?selectRacketCandidate([rawTracked],lm,null):null;
+        if(!tracked)racketTracker=null;
       }
+      if(detectorRacket){
+        if(!racketTracker){
+          racketTracker=createRacketVisualTracker(canvas,detectorRacket);
+          racket={...detectorRacket,source:'Modell-Starttreffer'};
+        }else if(!tracked||Math.hypot((detectorRacket.x+detectorRacket.w/2)-(tracked.x+tracked.w/2),(detectorRacket.y+detectorRacket.h/2)-(tracked.y+tracked.h/2))<.10){
+          if(racketTracker.reseed(canvas,detectorRacket)){racket={...detectorRacket,source:'Modell-Korrektur'};racketReanchors++;}
+        }
+      }
+      if(!racket&&tracked)racket=tracked;
+      if(racket?.source==='Bildverfolgung')racketTrackingSamples++;
       if(racket)racketSamples++;
       const frame={time:times[i],visible,leftElbow:null,rightElbow:null,leftKnee:null,rightKnee:null,leftArmPoint:null,rightArmPoint:null,pose:lm.map(p=>({x:p.x,y:p.y,visibility:p.visibility??1})),racket,racketCandidates:racketResult.debugCandidates||racketResult.candidates||[],racketDiagnostic};
       const torsoLeft=Math.max(.05,Math.hypot(lm[11].x-lm[23].x,lm[11].y-lm[23].y));
