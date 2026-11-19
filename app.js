@@ -313,6 +313,19 @@ async function startForehandAnalysis(videoId){
       frames.push(frame);phaseFrames[Math.min(2,Math.floor(i/Math.max(1,times.length/3)))].push(frame);
       if(!preview&&visible>=20){drawPose(canvas,lm);preview=canvas.toDataURL('image/jpeg',.78)}
     }
+    // Keep only racket detections that are spatially plausible in consecutive samples.
+    // Isolated one-frame detections are commonly background false positives.
+    const racketFrames=frames.filter(frame=>frame.racket);
+    for(const frame of racketFrames){
+      const cx=frame.racket.x+frame.racket.w/2,cy=frame.racket.y+frame.racket.h/2;
+      const supported=racketFrames.some(other=>{
+        if(other===frame||Math.abs(other.time-frame.time)>.26)return false;
+        const ox=other.racket.x+other.racket.w/2,oy=other.racket.y+other.racket.h/2;
+        return Math.hypot(cx-ox,cy-oy)<.30;
+      });
+      if(!supported)frame.racket=null;
+    }
+    racketSamples=frames.filter(frame=>frame.racket).length;
     const coverage=Math.round(detected/Math.max(1,times.length)*100);
     const phases=phaseFrames.map((group,i)=>({name:['Anfang','Mitte','Ende'][i],leftElbow:seriesStats(group.map(x=>x.leftElbow).filter(Number.isFinite)),rightElbow:seriesStats(group.map(x=>x.rightElbow).filter(Number.isFinite)),leftKnee:seriesStats(group.map(x=>x.leftKnee).filter(Number.isFinite)),rightKnee:seriesStats(group.map(x=>x.rightKnee).filter(Number.isFinite))}));
     const strokePhases=detectStrokePhases(frames);
