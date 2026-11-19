@@ -1,6 +1,7 @@
 name: Export tennis-specific racket model
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - feature/courtside-model-export
@@ -52,7 +53,7 @@ jobs:
               opset=17,
               simplify=True,
               nms=True,
-              conf=0.10,
+              conf=0.001,
               iou=0.45,
               dynamic=False,
               batch=1,
