@@ -79,20 +79,34 @@ function detectStrokePhases(frames){
   }
   if(motionStartIndex<0||!smooth[motionStartIndex])return {status:'uncertain',side:best.side,phases:[],reason:'Keine zusammenhängende Beschleunigungsphase erkannt.'};
   const motionStartFrame=smooth[motionStartIndex].i;
-  const preparationPoints=points.filter(p=>p.i<motionStartFrame);
-  let loadStart=null,farthest=null,clearLoad=false;
-  if(preparationPoints.length>=4){
-    const baselinePoints=preparationPoints.slice(0,3);
-    const baseline={x:baselinePoints.reduce((s,p)=>s+p.p.x,0)/baselinePoints.length,y:baselinePoints.reduce((s,p)=>s+p.p.y,0)/baselinePoints.length};
-    const distance=p=>Math.hypot(p.p.x-baseline.x,p.p.y-baseline.y);
-    farthest=preparationPoints.reduce((a,b)=>distance(b)>distance(a)?b:a,preparationPoints[0]);
-    let pathLength=0,previous=baseline;
-    for(const p of preparationPoints){pathLength+=Math.hypot(p.p.x-previous.x,p.p.y-previous.y);previous=p.p;}
-    const excursion=distance(farthest);
-    const coherence=pathLength>0?excursion/pathLength:0;
-    const onsetThreshold=Math.max(.035,excursion*.15);
-    loadStart=preparationPoints.find(p=>distance(p)>=onsetThreshold)||null;
-    clearLoad=excursion>=.10&&coherence>=.50&&!!loadStart&&farthest.i>=loadStart.i+2;
+  let reversal=null,reversalScore=0;
+  for(let i=3;i<=peakPoint-3;i++){
+    const before=points[i].p,after=points[i+3].p,origin=points[i-3].p;
+    if(points[i].i-origin.i>5||points[i+3].i-points[i].i>5)continue;
+    const bx=before.x-origin.x,by=before.y-origin.y,ax=after.x-before.x,ay=after.y-before.y;
+    const beforeDistance=Math.hypot(bx,by),afterDistance=Math.hypot(ax,ay);
+    if(beforeDistance<.08||afterDistance<.10)continue;
+    const direction=(bx*ax+by*ay)/(beforeDistance*afterDistance);
+    if(direction<-.25){
+      const score=beforeDistance+afterDistance+(-direction)*.1;
+      if(score>reversalScore){reversalScore=score;reversal=points[i];}
+    }
+  }
+  let loadStart=null,clearLoad=false;
+  if(reversal){
+    const preparationPoints=points.filter(p=>p.i<=reversal.i);
+    if(preparationPoints.length>=4){
+      const baselinePoints=preparationPoints.slice(0,3);
+      const baseline={x:baselinePoints.reduce((s,p)=>s+p.p.x,0)/baselinePoints.length,y:baselinePoints.reduce((s,p)=>s+p.p.y,0)/baselinePoints.length};
+      const distance=p=>Math.hypot(p.p.x-baseline.x,p.p.y-baseline.y);
+      const excursion=distance(reversal);
+      let pathLength=0,previous=baseline;
+      for(const p of preparationPoints){pathLength+=Math.hypot(p.p.x-previous.x,p.p.y-previous.y);previous=p.p;}
+      const coherence=pathLength>0?excursion/pathLength:0;
+      const onsetThreshold=Math.max(.035,excursion*.15);
+      loadStart=preparationPoints.find(p=>distance(p)>=onsetThreshold)||null;
+      clearLoad=excursion>=.10&&coherence>=.50&&!!loadStart&&reversal.i>=loadStart.i+2;
+    }
   }
   let motionEnd=points[points.length-1].i;
   const afterPeak=smooth.filter(x=>x&&x.i>peak.i);
@@ -100,12 +114,12 @@ function detectStrokePhases(frames){
   const sample=frames.length>1?(frames[frames.length-1].time-frames[0].time)/(frames.length-1):.1;
   const at=i=>frames[Math.max(0,Math.min(frames.length-1,i))]?.time??0;
   const phases=[];
-  if(clearLoad)phases.push({name:'Ausholen / Vorbereitung',start:at(loadStart.i),end:at(farthest.i)});
-  phases.push({name:'Beschleunigung',start:at(clearLoad?farthest.i:motionStartFrame),end:at(peak.i)});
+  if(clearLoad)phases.push({name:'Ausholen / Vorbereitung',start:at(loadStart.i),end:at(reversal.i)});
+  phases.push({name:'Beschleunigung',start:at(clearLoad?reversal.i:motionStartFrame),end:at(peak.i)});
   phases.push({name:'Treffpunkt-Kandidat',start:Math.max(0,peak.time-sample/2),end:peak.time+sample/2});
   if(motionEnd>peak.i+1)phases.push({name:'Ausschwung',start:at(Math.min(motionEnd,peak.i+1)),end:at(motionEnd)});
   const status=clearLoad&&motionEnd>peak.i+1?'estimated':'low-confidence';
-  const reason=clearLoad?'Ausholen anhand einer zusammenhängenden Handgelenkbewegung vor der Beschleunigung erkannt.': 'Keine ausreichend klare Ausholbewegung vor der Beschleunigung erkannt; die Phase wird nicht künstlich ergänzt.';
+  const reason=clearLoad?'Ausholen anhand einer klaren Richtungsumkehr vor der Beschleunigung erkannt.':'Keine ausreichend klare Ausholbewegung mit Richtungswechsel erkannt; die Phase wird nicht künstlich ergänzt.';
   return {status,side:best.side,peakTime:peak.time,peakSpeed:Number(peak.speed.toFixed(2)),phases,reason};
 }
 async function startForehandAnalysis(videoId){
