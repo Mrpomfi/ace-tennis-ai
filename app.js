@@ -71,11 +71,12 @@ function detectStrokePhases(frames){
   const peakPoint=points.findIndex(p=>p.i===peak.i);
   if(peakPoint<4||peakPoint>=points.length-3)return {status:'uncertain',side:best.side,phases:[],reason:'Zu wenig Bewegung vor oder nach dem schnellsten Armabschnitt.'};
   const threshold=Math.max(.12,peak.speed*.14);
-  let motionStartIndex=0;
+  let motionStartIndex=-1;
   for(let i=0;i<smooth.length;i++){
     if(smooth[i]?.speed>=threshold&&smooth.slice(i,Math.min(smooth.length,i+3)).filter(x=>x&&x.speed>=threshold).length>=2){motionStartIndex=i;break;}
   }
-  const motionStartFrame=smooth[motionStartIndex]?.i??points[0].i;
+  if(motionStartIndex<0)return {status:'uncertain',side:best.side,phases:[],reason:'Keine zusammenhängende Schlagbewegung mit ausreichender Geschwindigkeit erkannt.'};
+  const motionStartFrame=smooth[motionStartIndex].i;
   const prePeak=points.filter(p=>p.i>=motionStartFrame&&p.i<peak.i);
   if(prePeak.length<3)return {status:'low-confidence',side:best.side,phases:[],reason:'Eine getrennte Ausholbewegung vor der Beschleunigung ließ sich nicht sicher abgrenzen.'};
   const radius=p=>Math.hypot(p.p.x,p.p.y);
