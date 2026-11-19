@@ -84,22 +84,60 @@ async function getRacketTask(){
       }
       const tensor=new ort.Tensor('float32',inputData,[1,3,640,640]);
       const outputs=await session.run({[inputName]:tensor});
-      const output=outputs[outputName],values=output.data;
+      const output=outputs[outputName],values=output.data,dims=output.dims||[];
       let best=null;
-      const rows=output.dims?.[1]||0;
-      for(let i=0;i<rows;i++){
-        const j=i*6,score=values[j+4],classId=Math.round(values[j+5]);
-        if(classId!==0||!Number.isFinite(score)||score<.15)continue;
-        const x1=values[j],y1=values[j+1],x2=values[j+2],y2=values[j+3];
-        if(!Number.isFinite(x1+y1+x2+y2))continue;
+      const rank=dims.length,shape=dims.slice(-2);
+      const candidates=[];
+      const addBox=(x1,y1,x2,y2,score)=>{
+        if(!Number.isFinite(score)||score<.15||![x1,y1,x2,y2].every(Number.isFinite))return;
         const x=Math.max(0,Math.min(canvas.width,(x1-offsetX)/scale));
         const y=Math.max(0,Math.min(canvas.height,(y1-offsetY)/scale));
         const right=Math.max(0,Math.min(canvas.width,(x2-offsetX)/scale));
         const bottom=Math.max(0,Math.min(canvas.height,(y2-offsetY)/scale));
-        if(right<=x||bottom<=y)continue;
-        const candidate={x:x/canvas.width,y:y/canvas.height,w:(right-x)/canvas.width,h:(bottom-y)/canvas.height,score};
-        if(!best||score>best.score)best=candidate;
+        if(right<=x||bottom<=y)return;
+        candidates.push({x:x/canvas.width,y:y/canvas.height,w:(right-x)/canvas.width,h:(bottom-y)/canvas.height,score});
+      };
+      if(rank===3&&shape[1]===6){
+        // Ultralytics export with NMS: [1, detections, x1/y1/x2/y2/conf/class].
+        const count=shape[0];
+        for(let i=0;i<count;i++){
+          const j=i*6,score=values[j+4],classId=Math.round(values[j+5]);
+          if(classId!==0)continue;
+          addBox(values[j],values[j+1],values[j+2],values[j+3],score);
+        }
+      }else if(rank===3&&shape[0]===6){
+        // Same NMS output with transposed dimensions: [1, 6, detections].
+        const count=shape[1];
+        for(let i=0;i<count;i++){
+          const score=values[4*count+i],classId=Math.round(values[5*count+i]);
+          if(classId!==0)continue;
+          addBox(values[i],values[count+i],values[2*count+i],values[3*count+i],score);
+        }
+      }else if(rank===3&&shape[0]>=5&&shape[0]<=64){
+        // Raw YOLO output [1, 4 + classes, candidates], with xywh and class scores.
+        const channels=shape[0],count=shape[1];
+        for(let i=0;i<count;i++){
+          let classId=0,score=-Infinity;
+          for(let c=4;c<channels;c++){const value=values[c*count+i];if(value>score){score=value;classId=c-4;}}
+          if(classId!==0||!Number.isFinite(score)||score<.15)continue;
+          const cx=values[i],cy=values[count+i],bw=values[2*count+i],bh=values[3*count+i];
+          addBox(cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2,score);
+        }
+      }else if(rank===3&&shape[1]>=5&&shape[1]<=64){
+        // Raw YOLO output [1, candidates, 4 + classes].
+        const count=shape[0],channels=shape[1];
+        for(let i=0;i<count;i++){
+          const j=i*channels;
+          let classId=0,score=-Infinity;
+          for(let c=4;c<channels;c++){const value=values[j+c];if(value>score){score=value;classId=c-4;}}
+          if(classId!==0||!Number.isFinite(score)||score<.15)continue;
+          const cx=values[j],cy=values[j+1],bw=values[j+2],bh=values[j+3];
+          addBox(cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2,score);
+        }
+      }else{
+        console.warn('Unbekanntes Schläger-Modell-Ausgabeformat:',dims);
       }
+      for(const candidate of candidates)if(!best||candidate.score>best.score)best=candidate;
       tensor.dispose?.();output?.dispose?.();
       return best;
     },
