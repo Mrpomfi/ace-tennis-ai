@@ -230,7 +230,7 @@ async function detectRacket(detector,canvas,landmarks){
       return {side:side+'-'+factor.toFixed(1)+'x',sx,sy,sw,sh};
     });
   });
-  if(!arms.length)return {box:null,candidates:fullCandidates,diagnostic:{
+  if(!arms.length)return {box:null,candidates:fullCandidates,debugCandidates:fullDebugCandidates,diagnostic:{
     ...fullDiagnostic,inferenceModes:['Ganzbild'],cropInferenceCount:0,cropSides:[],
     errors:['Keine sichere Hand-/Unterarmposition für die lokale Suche']
   }};
