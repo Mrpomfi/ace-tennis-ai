@@ -1,5 +1,5 @@
-const CACHE='ace-tennis-local-v3.26';
-const FILES=['./','./index.html','./styles.css','./app.js?v=3.26','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
+const CACHE='ace-tennis-local-v3.27';
+const FILES=['./','./index.html','./styles.css','./app.js?v=3.27','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{
   const keys=await caches.keys();
