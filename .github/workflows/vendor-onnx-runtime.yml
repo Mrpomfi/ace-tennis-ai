@@ -30,10 +30,10 @@ jobs:
           npm install --no-save --no-package-lock onnxruntime-web@1.20.1
           mkdir -p vendor/onnxruntime-web
           cp node_modules/onnxruntime-web/dist/ort.min.js vendor/onnxruntime-web/
-          cp node_modules/onnxruntime-web/dist/*.wasm vendor/onnxruntime-web/
-          cp node_modules/onnxruntime-web/dist/*.mjs vendor/onnxruntime-web/ || true
+          cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm vendor/onnxruntime-web/
+          cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs vendor/onnxruntime-web/
           test -s vendor/onnxruntime-web/ort.min.js
-          test -s vendor/onnxruntime-web/ort-wasm-simd.wasm
+          test -s vendor/onnxruntime-web/ort-wasm-simd-threaded.wasm
 
       - name: Commit the local browser runtime
         run: |
